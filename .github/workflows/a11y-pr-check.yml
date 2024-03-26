@@ -3,8 +3,6 @@ name: Accessibility Checks
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    paths:
-      - 'src/**/*.{js,jsx}'
 
 jobs:
   a11y-lint:

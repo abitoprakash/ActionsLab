@@ -1,0 +1,98 @@
+{
+  "parser": "babel-eslint",
+  "parserOptions": {
+    "ecmaFeatures": {
+      "jsx": true
+    }
+  },
+  "extends": [
+  	"prism/rules/base",
+    "prism/rules/best_practices",
+    "prism/rules/errors.js",
+    "prism/rules/es6.js",
+    "prism/rules/react_jsx.js",
+    "prism/rules/style.js",
+    "prism/rules/variables.js"
+  ],
+  "plugins": [
+    "import",
+    "jest",
+    "mocha",
+    "schooner-custom"
+  ],
+  "env": {
+    "es6": true,
+    "node": true,
+    "jest/globals": true,
+    "browser": true,
+    "mocha":true
+  },
+  "rules": {
+    "import/no-unassigned-import": "off",
+    "indent": [
+      "error",
+      2,
+      {
+        "SwitchCase": 1,
+        "VariableDeclarator": {
+          "var": 2,
+          "let": 2,
+          "const": 3
+        },
+        "ignoredNodes": [
+          "TemplateLiteral"
+        ]
+      }
+    ],
+    "no-undefined": "off",
+    // "one-var": [
+    //   "error",
+    //   {
+    //     "var": "always",
+    //     "let": "never",
+    //     "const": "never"
+    //   }
+    // ],
+    "react/jsx-curly-spacing": [
+      "error",
+      {
+        "when": "always",
+        "children": true,
+        "allowMultiline": true
+      }
+    ],
+    "react/jsx-handler-names": "warn",
+    "space-before-function-paren": ["error", {
+      "anonymous": "never",
+      "named": "never",
+      "asyncArrow": "always"
+    }],
+    "template-curly-spacing": "off",
+    "schooner-custom/require-panel-id-prefix": "error",
+    "schooner-custom/use-v2-tooltip": "warn"
+  },
+  "settings": {
+    "react": {
+      "version": "16.6.0"
+    },
+    "import/resolver": {
+      "webpack" : {
+        "config": "node_modules/@ntnx/hulk-scripts/webpack/webpack.config.js"
+      }
+    }
+  },
+  "globals": {
+    "_": true,
+    "Asset": true,
+    "document": true,
+    "window": true,
+    "App": true,
+    "__ENV__": true,
+    "LE": true,
+    "LogService": true,
+    "InsightsAssetService": true,
+    "util": true,
+    "sails": true,
+    "ga"
+  }
+}

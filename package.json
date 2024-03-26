@@ -1,0 +1,44 @@
+{
+  "name": "actionslab",
+  "version": "1.0.0",
+  "description": "Test github actions",
+  "main": "index.js",
+  "scripts": {
+    "test": "test",
+    "start": "webpack-dev-server --mode development --open",
+    "build": "webpack --mode production",
+    "lint": "eslint ./src",
+    "lint:fix": "eslint ./src --fix",
+    "lint:a11y": "eslint --no-eslintrc --ext .js,.jsx src --config .eslintrc.a11y.json",
+    "lint-fix:a11y": "eslint --no-eslintrc --ext .js,.jsx src --config .eslintrc.a11y.json --fix"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abitoprakash/ActionsLab.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/abitoprakash/ActionsLab/issues"
+  },
+  "homepage": "https://github.com/abitoprakash/ActionsLab#readme",
+  "devDependencies": {
+    "@babel/core": "^7.24.3",
+    "@babel/eslint-parser": "^7.24.1",
+    "@babel/preset-env": "^7.24.3",
+    "@babel/preset-react": "^7.24.1",
+    "babel-loader": "^9.1.3",
+    "eslint": "^8.57.0",
+    "eslint-plugin-jsx-a11y": "^6.8.0",
+    "eslint-plugin-react": "^7.34.1",
+    "eslint-plugin-unicorn": "^51.0.1",
+    "html-webpack-plugin": "^5.6.0",
+    "webpack": "^5.91.0",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^5.0.4"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+}

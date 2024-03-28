@@ -10,6 +10,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v2
@@ -19,7 +21,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run eslint on changed files
-        uses: tj-actions/eslint-changed-files@v23
-        with:
-          config_path: "./.eslintrc.a11y.json"
+      - name: Run a11y eslint checks on modified files
+        run: |
+          DIFFED_FILES_TO_LINT=$(git diff origin/${{ github.base_ref }}...HEAD --name-only -- '*.js' '*.jsx')
+          if [ -n "$DIFFED_FILES_TO_LINT" ]; then
+            echo "Running A11y ESLint on modified files..."
+            echo "$DIFFED_FILES_TO_LINT" | xargs eslint --no-eslintrc --ext .js,.jsx --config .eslintrc.a11y.json
+          else
+            echo "No JS/JSX files were modified"

@@ -21,6 +21,5 @@ jobs:
 
       - name: Run a11y eslint checks on modified files
         run: |
-          git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -E '\.(js|jsx)$' | \
-          xargs -I {} sh -c 'test -e {} && echo {}' | \
-          xargs npm run lint:a11y --
+          git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -E '\.(js|jsx)$' | xargs -r eslint --no-eslintrc --ext .js,.jsx --config .eslintrc.a11y.json
+

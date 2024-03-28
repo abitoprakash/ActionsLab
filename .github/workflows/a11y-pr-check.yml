@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run a11y eslint checks on modified files
-        run: |
-          git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep -E '\.(js|jsx)$' | xargs -r eslint --no-eslintrc --ext .js,.jsx --config .eslintrc.a11y.json
-
+      - name: Run eslint on changed files
+        uses: tj-actions/eslint-changed-files@v23
+        with:
+          config_path: "./.eslintrc.a11y.json"

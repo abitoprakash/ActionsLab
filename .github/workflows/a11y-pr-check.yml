@@ -29,3 +29,4 @@ jobs:
             echo "$DIFFED_FILES_TO_LINT" | xargs eslint --no-eslintrc --ext .js,.jsx --config .eslintrc.a11y.json
           else
             echo "No JS/JSX files were modified"
+          fi

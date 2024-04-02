@@ -13,11 +13,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Node
+      - name: Detect NodeJS version
+        id: nodejs-version
+        run: |
+          echo "node_version=$(jq -r '.engines.node' package.json)" >> $GITHUB_OUTPUT
+
+      - name: Set up NodeJS
         uses: actions/setup-node@v2
         with:
-          node-version: '14'
+          node-version: ${{ steps.nodejs-version.outputs.node_version }}
+          cache: 'npm'
 
+      - name: Remove npmrc and package-lock files
+        run: rm -f .npmrc package-lock.json
+      
       - name: Install dependencies
         run: npm install
 
@@ -26,6 +35,8 @@ jobs:
           DIFFED_FILES_TO_LINT=$(git diff origin/${{ github.base_ref }}...HEAD --name-only -- '*.js' '*.jsx')
           if [ -n "$DIFFED_FILES_TO_LINT" ]; then
             echo "Running A11y ESLint on modified files..."
-            echo "$DIFFED_FILES_TO_LINT" | xargs eslint --no-eslintrc --ext .js,.jsx --config .eslintrc.a11y.json
+            echo "$DIFFED_FILES_TO_LINT"
+            echo "$DIFFED_FILES_TO_LINT" | xargs npx eslint --no-eslintrc --ext .js,.jsx --config .eslintrc.a11y.json
           else
             echo "No JS/JSX files were modified"
+          fi

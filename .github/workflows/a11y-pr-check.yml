@@ -4,7 +4,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
-      - 'src2/**/*.{js,jsx}'
+      - 'src2/**/*.js'
+      - 'src2/**/*.jsx'
 
 jobs:
   a11y-lint:

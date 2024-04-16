@@ -16,8 +16,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Remove npmrc and package-lock files
-        run: rm -f .npmrc package-lock.json
+      - name: Remove npmrc file
+        run: rm -f .npmrc
 
       - name: Detect NodeJS version
         id: nodejs-version
@@ -29,7 +29,10 @@ jobs:
         with:
           node-version: ${{ steps.nodejs-version.outputs.node_version }}
           cache: 'npm'
-      
+
+      - name: Remove package-lock file
+        run: rm -f package-lock.json
+
       - name: Install dependencies
         run: npm install
 

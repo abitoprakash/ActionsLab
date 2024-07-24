@@ -10,7 +10,7 @@ const ExampleComponent = () => {
   return (
     <div
       onClick={() =>
-        console.log('Clicked without prosperssssss role ors key event shandlers')
+        console.log('Clicssked without properssssss role or key event handlers')
       }
     >
       Click me!

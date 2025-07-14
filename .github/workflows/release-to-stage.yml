@@ -1,4 +1,3 @@
-# .github/workflows/release-to-stage.yml
 name: "📦 Release to Stage"
 on:
   workflow_dispatch:
@@ -11,12 +10,13 @@ on:
         required: false
 
 permissions:
-  contents: read
-  pull-requests: write
+  contents: write        # allow creating PRs via GraphQL/REST
+  pull-requests: write   # allow pull-request operations
 
 jobs:
   release:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -32,14 +32,12 @@ jobs:
           BODY:     "${{ github.event.inputs.description }}"
         run: |
           set -e
-          # create the PR, capture the URL that gh prints
           pr_url=$(gh pr create \
             --head develop \
             --base stage \
             --title "$TITLE" \
             --body "$BODY")
           echo "pr_url=$pr_url" >> $GITHUB_OUTPUT
-          # extract the PR number from the URL (last path segment)
           pr_number=${pr_url##*/}
           echo "pr_number=$pr_number" >> $GITHUB_OUTPUT
 

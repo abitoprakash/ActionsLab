@@ -1,0 +1,86 @@
+# File: .github/workflows/release-to-stage.yml
+name: "📦 Release to Stage"
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: 'PR title'
+        required: true
+      description:
+        description: 'PR description (Confluence link, notes…)'
+        required: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Checkout the repo
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2. Create the develop → stage PR (using latest v7.x of the action)
+      - name: Create develop→stage PR
+        id: create_pr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          base: stage
+          branch: develop
+          title: ${{ github.event.inputs.title }}
+          body: ${{ github.event.inputs.description }}
+          draft: false
+
+      # 3. Gather commit-author emails
+      - name: Get PR commit emails
+        id: authors
+        uses: actions/github-script@v6
+        env:
+          PULL_NUMBER: ${{ steps.create_pr.outputs['pull-request-number'] }}
+        with:
+          script: |
+            const pr = Number(process.env.PULL_NUMBER);
+            const { data: commits } = await github.rest.pulls.listCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr
+            });
+            return [...new Set(commits.map(c => c.commit.author.email))];
+
+      # 4. Map emails → Slack mentions
+      - name: Map to Slack IDs
+        id: slack_ids
+        run: |
+          map=$(cat .github/slack-map.json)
+          mentions=()
+          for email in ${{ steps.authors.outputs.result }}; do
+            id=$(jq -r --arg e "$email" '.[$e] // empty' <<<"$map")
+            if [[ -n "$id" ]]; then
+              mentions+=( "<@$id>" )
+            else
+              mentions+=( "$email" )
+            fi
+          done
+          echo "ids=${mentions[*]}" >> $GITHUB_OUTPUT
+
+      # 5. Notify the single Slack Workflow via its webhook
+      - name: Notify Slack via Workflow
+        if: ${{ steps.create_pr.outputs['pull-request-number'] }}
+        env:
+          WORKFLOW_WEBHOOK: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
+          EVENT:           "Release to Stage"
+          TITLE:           "${{ github.event.inputs.title }}"
+          MESSAGE:         |
+                              • PR: <${{ steps.create_pr.outputs['pull-request-url'] }}|View on GitHub>
+                              • Description: ${{ github.event.inputs.description || '– none –' }}
+          MENTIONS:        ${{ steps.slack_ids.outputs.ids }}
+        run: |
+          jq -n \
+            --arg event    "$EVENT" \
+            --arg title    "$TITLE" \
+            --arg message  "$MESSAGE" \
+            --arg mentions "$MENTIONS" \
+            '{event: $event, title: $title, message: $message, mentions: $mentions}' \
+          | curl -X POST \
+                 -H "Content-Type: application/json" \
+                 --data @- \
+                 "$WORKFLOW_WEBHOOK"

@@ -1,4 +1,4 @@
-# File: .github/workflows/release-to-stage.yml
+# .github/workflows/release-to-stage.yml
 name: "📦 Release to Stage"
 on:
   workflow_dispatch:
@@ -11,46 +11,45 @@ on:
         required: false
 
 permissions:
-  contents: read         # for listing commits
-  pull-requests: write   # to create the PR
+  contents: read
+  pull-requests: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-
-      # 1. Checkout repo so we can run gh and list commits
       - name: Checkout
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
           persist-credentials: true
 
-      # 2. Create a PR from develop → stage with gh CLI
-      - name: Create develop→stage PR
-        id: create_pr
+      - name: Create develop→stage PR via gh CLI
+        id: gh_pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE:    "${{ github.event.inputs.title }}"
+          BODY:     "${{ github.event.inputs.description }}"
         run: |
-          pr_json=$(gh pr create \
-            --title "${{ github.event.inputs.title }}" \
-            --body "${{ github.event.inputs.description }}" \
-            --base stage \
+          set -e
+          # create the PR, capture the URL that gh prints
+          pr_url=$(gh pr create \
             --head develop \
-            --json number,url)
-          number=$(jq -r .number <<<"$pr_json")
-          url=$(jq -r .url    <<<"$pr_json")
-          echo "number=$number" >> $GITHUB_OUTPUT
-          echo "url=$url"       >> $GITHUB_OUTPUT
+            --base stage \
+            --title "$TITLE" \
+            --body "$BODY")
+          echo "pr_url=$pr_url" >> $GITHUB_OUTPUT
+          # extract the PR number from the URL (last path segment)
+          pr_number=${pr_url##*/}
+          echo "pr_number=$pr_number" >> $GITHUB_OUTPUT
 
-      # 3. List unique commit-author emails on that PR
       - name: Get PR commit emails
         id: authors
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const n = Number('${{ steps.create_pr.outputs.number }}');
+            const n = Number('${{ steps.gh_pr.outputs.pr_number }}');
             const { data: commits } = await github.rest.pulls.listCommits({
               owner: context.repo.owner,
               repo:  context.repo.repo,
@@ -58,7 +57,6 @@ jobs:
             });
             return [...new Set(commits.map(c => c.commit.author.email))];
 
-      # 4. Map emails → Slack IDs (fallback to raw email)
       - name: Map to Slack IDs
         id: slack_ids
         run: |
@@ -74,15 +72,14 @@ jobs:
           done
           echo "ids=${mentions[*]}" >> $GITHUB_OUTPUT
 
-      # 5. Notify Slack via your single Workflow
       - name: Notify Slack via Workflow
-        if: steps.create_pr.outputs.number
+        if: steps.gh_pr.outputs.pr_number
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
           EVENT:        "Release to Stage"
           TITLE:        "${{ github.event.inputs.title }}"
           MESSAGE:      |
-                          • PR: <${{ steps.create_pr.outputs.url }}|View on GitHub>
+                          • PR: <${{ steps.gh_pr.outputs.pr_url }}|View on GitHub>
                           • Description: ${{ github.event.inputs.description || '– none –' }}
           MENTIONS:     ${{ steps.slack_ids.outputs.ids }}
         run: |

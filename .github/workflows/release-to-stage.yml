@@ -1,8 +1,8 @@
 name: "Create develop -> Stage PR"
 
 permissions:
-  contents: read          # checkout + gh api
-  pull-requests: write    # create / edit PRs
+  contents: read
+  pull-requests: write
 
 on:
   workflow_dispatch:
@@ -11,8 +11,8 @@ on:
         description: "Pull‑request title"
         required: true
         type: string
-      pr_body:
-        description: "Pull‑request body (Confluence link, notes, etc.)"
+      pr_body:            # ← kept for CLI parity but no longer sent to Slack
+        description: "Optional notes (ignored for Slack)"
         required: false
         type: string
 
@@ -25,11 +25,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1 Checkout repo (includes slack-user-map.json)
+      # 1  Repo checkout (includes slack-user-map.json)
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      # 2 Create the PR develop → stage
+      # 2  Open the Develop → Stage PR
       - name: Open pull request
         id: pr
         run: |
@@ -37,61 +37,49 @@ jobs:
                  --head develop --base stage \
                  --title "${{ github.event.inputs.pr_title }}" \
                  --body  "${{ github.event.inputs.pr_body }}")
-          echo "url=$url"   >>"$GITHUB_OUTPUT"
+          echo "url=$url" >>"$GITHUB_OUTPUT"
           echo "number=${url##*/}" >>"$GITHUB_OUTPUT"
 
-      # 3 Collect commit authors
+      # 3  Collect authors – keep usernames separate for reviewers
       - name: Gather commit authors
         id: authors
         run: |
           commits=$(gh api repos/${{ github.repository }}/pulls/${{ steps.pr.outputs.number }}/commits)
-          # Grab BOTH author.login and commit email
-          all=$(jq -r '.[] | .author.login?, .commit.author.email?' <<<"$commits" | grep -v null | sort -u)
-          # Separate usernames (no "@") for the reviewer request
-          logins=$(echo "$all" | grep -v '@' | tr '\n' ',' | sed 's/,$//')
-          echo "all=$(echo "$all" | tr '\n' ',' | sed 's/,$//')"      >>"$GITHUB_OUTPUT"
+          all_ids=$(jq -r '.[] | .author.login?, .commit.author.email?' <<<"$commits" | grep -v null | sort -u)
+          logins=$(echo "$all_ids" | grep -v '@' | tr '\n' ',' | sed 's/,$//')
+          echo "all=$(echo "$all_ids" | tr '\n' ',' | sed 's/,$//')"  >>"$GITHUB_OUTPUT"
           echo "logins=$logins"                                       >>"$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ env.GH_TOKEN }}
 
-      # 4 Request reviewers (usernames only)
       - name: Add reviewers
         if: steps.authors.outputs.logins != ''
         run: gh pr edit ${{ steps.pr.outputs.number }} --add-reviewer "${{ steps.authors.outputs.logins }}"
-        env:
-          GH_TOKEN: ${{ env.GH_TOKEN }}
 
-      # 5 Map IDs to Slack mentions
+      # 4  Map to Slack mentions (uses .github/slack-user-map.json)
       - name: Map to Slack mentions
         id: mentions
         run: |
           mapfile -t ids < <(echo "${{ steps.authors.outputs.all }}" | tr ',' '\n')
-          declare -a mentions
+          declare -a m
           for id in "${ids[@]}"; do
-            # Try JSON map first (key may be login or e‑mail)
-            slack=$(jq -r --arg key "$id" '.[ $key ] // empty' .github/slack-user-map.json || true)
+            slack=$(jq -r --arg k "$id" '.[ $k ] // empty' .github/slack-user-map.json || true)
             if [[ -n "$slack" ]]; then
-              mentions+=("<@$slack>")
-            elif [[ "$id" == *"@"* ]]; then            # e‑mail fallback → local‑part
-              mentions+=("$(cut -d@ -f1 <<<"$id")")
+              m+=("<@$slack>")
+            elif [[ "$id" == *"@"* ]]; then
+              m+=("$(cut -d@ -f1 <<<"$id")")
             else
-              mentions+=("$id")                        # plain GitHub login
+              m+=("$id")
             fi
           done
-          echo "list=$(IFS=' '; echo "${mentions[*]}")" >>"$GITHUB_OUTPUT"
+          echo "list=$(IFS=' '; echo "${m[*]}")" >>"$GITHUB_OUTPUT"
 
-      # 6 Post the catchy Slack message
+      # 5  Send compact, professional Slack message (title + body only)
       - name: Notify Slack
         run: |
           link="<${{ steps.pr.outputs.url }}|PR #${{ steps.pr.outputs.number }}>"
-          body="👥 *Reviewers*: ${{ steps.mentions.outputs.list }}"
-          [[ -n "${{ github.event.inputs.pr_body }}" ]] && body+="\n📝 ${{ github.event.inputs.pr_body }}"
+          body=$(printf "👥 *Please review*: %s\n%s" "${{ steps.mentions.outputs.list }}" "$link")
           jq -n \
-            --arg event "pr_created" \
             --arg title ":rocket: Develop → Stage PR created" \
-            --arg url   "$link" \
             --arg body  "$body" \
-            --arg mentions "${{ steps.mentions.outputs.list }}" \
-            '{event:$event,body:$body,title:$title,mentions:$mentions,url:$url}' |
+            '{title:$title,body:$body}' |
           curl -s -X POST -H 'Content-Type: application/json' \
                --data @- "$SLACK_RELEASE_WORKFLOW_URL"

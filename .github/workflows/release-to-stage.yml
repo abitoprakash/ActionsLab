@@ -11,10 +11,6 @@ on:
         description: "Pull‑request title"
         required: true
         type: string
-      pr_body:            # ← kept for CLI parity but no longer sent to Slack
-        description: "Optional notes (ignored for Slack)"
-        required: false
-        type: string
 
 env:
   SLACK_RELEASE_WORKFLOW_URL: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
@@ -25,36 +21,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1  Repo checkout (includes slack-user-map.json)
+      # 1  Get the repo (includes slack-user-map.json)
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      # 2  Open the Develop → Stage PR
+      # 2  Open the PR develop → stage
       - name: Open pull request
         id: pr
         run: |
           url=$(gh pr create \
                  --head develop --base stage \
                  --title "${{ github.event.inputs.pr_title }}" \
-                 --body  "${{ github.event.inputs.pr_body }}")
+                 --body  "Auto‑generated promote PR.")
           echo "url=$url" >>"$GITHUB_OUTPUT"
           echo "number=${url##*/}" >>"$GITHUB_OUTPUT"
 
-      # 3  Collect authors – keep usernames separate for reviewers
+      # 3  Collect commit authors (usernames + e‑mails)
       - name: Gather commit authors
         id: authors
         run: |
           commits=$(gh api repos/${{ github.repository }}/pulls/${{ steps.pr.outputs.number }}/commits)
-          all_ids=$(jq -r '.[] | .author.login?, .commit.author.email?' <<<"$commits" | grep -v null | sort -u)
-          logins=$(echo "$all_ids" | grep -v '@' | tr '\n' ',' | sed 's/,$//')
-          echo "all=$(echo "$all_ids" | tr '\n' ',' | sed 's/,$//')"  >>"$GITHUB_OUTPUT"
-          echo "logins=$logins"                                       >>"$GITHUB_OUTPUT"
+          ids=$(jq -r '.[] | .author.login?, .commit.author.email?' <<<"$commits" | grep -v null | sort -u)
+          echo "all=$(echo "$ids" | tr '\n' ',' | sed 's/,$//')" >>"$GITHUB_OUTPUT"
 
-      - name: Add reviewers
-        if: steps.authors.outputs.logins != ''
-        run: gh pr edit ${{ steps.pr.outputs.number }} --add-reviewer "${{ steps.authors.outputs.logins }}"
-
-      # 4  Map to Slack mentions (uses .github/slack-user-map.json)
+      # 4  Map to Slack mentions (uses .github/slack-user-map.json)
       - name: Map to Slack mentions
         id: mentions
         run: |
@@ -65,21 +55,32 @@ jobs:
             if [[ -n "$slack" ]]; then
               m+=("<@$slack>")
             elif [[ "$id" == *"@"* ]]; then
-              m+=("$(cut -d@ -f1 <<<"$id")")
+              m+=("$(cut -d@ -f1 <<<"$id")")   # local‑part fallback
             else
               m+=("$id")
             fi
           done
           echo "list=$(IFS=' '; echo "${m[*]}")" >>"$GITHUB_OUTPUT"
 
-      # 5  Send compact, professional Slack message (title + body only)
+      # 5  Send title / body / url to Slack — with DEBUG output
       - name: Notify Slack
         run: |
-          link="<${{ steps.pr.outputs.url }}|PR #${{ steps.pr.outputs.number }}>"
-          body=$(printf "👥 *Please review*: %s\n%s" "${{ steps.mentions.outputs.list }}" "$link")
-          jq -n \
-            --arg title ":rocket: Develop → Stage PR created" \
+          set -euo pipefail
+
+          body="👥 *Please review*: ${{ steps.mentions.outputs.list }}"
+
+          payload=$(jq -n \
+            --arg title ":rocket: Develop → Stage PR #${{ steps.pr.outputs.number }} created" \
             --arg body  "$body" \
-            '{title:$title,body:$body}' |
-          curl -s -X POST -H 'Content-Type: application/json' \
-               --data @- "$SLACK_RELEASE_WORKFLOW_URL"
+            --arg url   "${{ steps.pr.outputs.url }}" \
+            '{title:$title,body:$body,url:$url}')
+
+          echo "=== Slack payload being sent ==="
+          echo "$payload" | jq .
+          echo "================================"
+
+          # -f: fail on non‑200, -sS: silent but show errors, -w prints HTTP code
+          curl -f -sS -X POST -H 'Content-Type: application/json' \
+               --data "$payload" "$SLACK_RELEASE_WORKFLOW_URL" \
+               -w '\nSlack responded with HTTP %{http_code}\n'
+

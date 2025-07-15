@@ -1,8 +1,8 @@
 name: "Create develop -> Stage PR"
 
 permissions:
-  contents: read
-  pull-requests: write
+  contents: read          # checkout + gh api
+  pull-requests: write    # create / edit PRs
 
 on:
   workflow_dispatch:
@@ -25,61 +25,71 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1 Checkout code so we can read the mapping JSON
+      # 1 Checkout repo (includes slack-user-map.json)
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      # 2 Open the cross‑branch PR
+      # 2 Create the PR develop → stage
       - name: Open pull request
         id: pr
         run: |
           url=$(gh pr create \
-            --head develop --base stage \
-            --title "${{ github.event.inputs.pr_title }}" \
-            --body  "${{ github.event.inputs.pr_body }}")
-          echo "url=$url" >>"$GITHUB_OUTPUT"
+                 --head develop --base stage \
+                 --title "${{ github.event.inputs.pr_title }}" \
+                 --body  "${{ github.event.inputs.pr_body }}")
+          echo "url=$url"   >>"$GITHUB_OUTPUT"
           echo "number=${url##*/}" >>"$GITHUB_OUTPUT"
 
-      # 3 Collect unique commit authors and request review
-      - name: Add commit authors as reviewers
-        id: reviewers
+      # 3 Collect commit authors
+      - name: Gather commit authors
+        id: authors
         run: |
           commits=$(gh api repos/${{ github.repository }}/pulls/${{ steps.pr.outputs.number }}/commits)
-          authors=$(jq -r '.[].author.login,.[].commit.author.email' <<<"$commits" | sort -u)
-          csv=$(echo "$authors" | tr '\n' ',' | sed 's/,$//')
-          if [ -n "$csv" ]; then
-            gh pr edit ${{ steps.pr.outputs.number }} --add-reviewer "$csv"
-          fi
-          echo "csv=$csv" >>"$GITHUB_OUTPUT"
+          # Grab BOTH author.login and commit email
+          all=$(jq -r '.[] | .author.login?, .commit.author.email?' <<<"$commits" | grep -v null | sort -u)
+          # Separate usernames (no "@") for the reviewer request
+          logins=$(echo "$all" | grep -v '@' | tr '\n' ',' | sed 's/,$//')
+          echo "all=$(echo "$all" | tr '\n' ',' | sed 's/,$//')"      >>"$GITHUB_OUTPUT"
+          echo "logins=$logins"                                       >>"$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ env.GH_TOKEN }}
 
-      # 4 Map reviewers to Slack IDs / handles
+      # 4 Request reviewers (usernames only)
+      - name: Add reviewers
+        if: steps.authors.outputs.logins != ''
+        run: gh pr edit ${{ steps.pr.outputs.number }} --add-reviewer "${{ steps.authors.outputs.logins }}"
+        env:
+          GH_TOKEN: ${{ env.GH_TOKEN }}
+
+      # 5 Map IDs to Slack mentions
       - name: Map to Slack mentions
         id: mentions
         run: |
-          mapfile -t list < <(echo "${{ steps.reviewers.outputs.csv }}" | tr ',' '\n')
+          mapfile -t ids < <(echo "${{ steps.authors.outputs.all }}" | tr ',' '\n')
           declare -a mentions
-          for id in "${list[@]}"; do
-            # look up by login or email in the mapping JSON
+          for id in "${ids[@]}"; do
+            # Try JSON map first (key may be login or e‑mail)
             slack=$(jq -r --arg key "$id" '.[ $key ] // empty' .github/slack-user-map.json || true)
             if [[ -n "$slack" ]]; then
               mentions+=("<@$slack>")
+            elif [[ "$id" == *"@"* ]]; then            # e‑mail fallback → local‑part
+              mentions+=("$(cut -d@ -f1 <<<"$id")")
             else
-              mentions+=("$id")              # fallback: show GitHub id
+              mentions+=("$id")                        # plain GitHub login
             fi
           done
-          mention_str=$(IFS=' '; echo "${mentions[*]}")
-          echo "list=$mention_str" >>"$GITHUB_OUTPUT"
+          echo "list=$(IFS=' '; echo "${mentions[*]}")" >>"$GITHUB_OUTPUT"
 
-      # 5 Post the catchy, professional Slack message
+      # 6 Post the catchy Slack message
       - name: Notify Slack
         run: |
-          pr_link="<${{ steps.pr.outputs.url }}|PR #${{ steps.pr.outputs.number }}>"
+          link="<${{ steps.pr.outputs.url }}|PR #${{ steps.pr.outputs.number }}>"
           body="👥 *Reviewers*: ${{ steps.mentions.outputs.list }}"
           [[ -n "${{ github.event.inputs.pr_body }}" ]] && body+="\n📝 ${{ github.event.inputs.pr_body }}"
           jq -n \
             --arg event "pr_created" \
             --arg title ":rocket: Develop → Stage PR created" \
-            --arg url   "$pr_link" \
+            --arg url   "$link" \
             --arg body  "$body" \
             --arg mentions "${{ steps.mentions.outputs.list }}" \
             '{event:$event,body:$body,title:$title,mentions:$mentions,url:$url}' |

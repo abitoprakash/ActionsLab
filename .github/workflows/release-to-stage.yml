@@ -1,77 +1,70 @@
-name: "Create develop → stage PR"
+name: "Develop → stage PR"
 
 on:
-  # QA triggers it from the Actions tab
   workflow_dispatch:
     inputs:
       pr_title:
-        description: "PR title (required)"
+        description: "Pull‑request title"
         required: true
         type: string
       pr_body:
-        description: "PR body / Confluence link (optional)"
+        description: "Pull‑request body (Confluence link, notes, etc.)"
         required: false
         type: string
 
 env:
-  # Add this secret under Repo → Settings → Secrets → Actions
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
 
 jobs:
-  open-pr:
+  promote:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. check out so `gh` can diff the two branches
+      # 1  Check out the repo so the gh CLI can compare branches
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2. create the PR (develop → stage)
+      # 2  Create the PR develop → stage
       - name: Create PR
         id: pr
         run: |
-          pr_json=$(gh pr create \
+          PR_URL=$(gh pr create \
               --head develop \
               --base stage \
               --title "${{ github.event.inputs.pr_title }}" \
               --body  "${{ github.event.inputs.pr_body }}" \
-              --json  number,url)
-          echo "number=$(jq -r .number <<<"$pr_json")" >>"$GITHUB_OUTPUT"
-          echo "url=$(jq -r .url    <<<"$pr_json")" >>"$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # auto‑generated
-
-      # 3. work out who committed to the PR and add them as reviewers
-      - name: Collect commit authors
-        id: mentions
-        run: |
-          mapfile -t authors < <(
-            gh pr view "${{ steps.pr.outputs.number }}" --json commits |
-            jq -r '.commits[].author.login' | sort -u )
-          csv=$(IFS=','; echo "${authors[*]}")
-          echo "list=$csv" >>"$GITHUB_OUTPUT"
+              --label "environment:stage")
+          echo "url=$PR_URL"   >>"$GITHUB_OUTPUT"
+          echo "number=${PR_URL##*/}" >>"$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Add reviewers
-        if: steps.mentions.outputs.list != ''
+      # 3  Get the unique commit authors and request their review
+      - name: Collect authors and request review
+        id: authors
         run: |
-          gh pr edit "${{ steps.pr.outputs.number }}" \
-               --add-reviewer "${{ steps.mentions.outputs.list }}"
+          owner=$(cut -d/ -f1 <<<"$GITHUB_REPOSITORY")
+          repo=$(cut -d/ -f2 <<<"$GITHUB_REPOSITORY")
+          authors=$(gh api repos/$owner/$repo/pulls/${{ steps.pr.outputs.number }}/commits |
+                    jq -r '.[].author.login' | sort -u | tr '\n' ',' | sed 's/,$//')
+          if [ -n "$authors" ]; then
+            gh pr edit ${{ steps.pr.outputs.number }} --add-reviewer "$authors"
+          fi
+          echo "csv=$authors" >>"$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 4. fire the generic Slack Workflow Builder webhook
+      # 4  Post the generic Slack message via Workflow‑Builder webhook
       - name: Notify Slack
         run: |
-          payload=$(jq -n \
+          jq -n \
             --arg event    "pr_created" \
             --arg title    "${{ github.event.inputs.pr_title }}" \
             --arg url      "${{ steps.pr.outputs.url }}" \
             --arg body     "${{ github.event.inputs.pr_body }}" \
-            --arg mentions "${{ steps.mentions.outputs.list }}" \
-            '{event:$event,body:$body,title:$title,mentions:$mentions,url:$url}')
-          curl -X POST -H 'Content-Type: application/json' \
-               -d "$payload" "$SLACK_WEBHOOK_URL"
+            --arg mentions "${{ steps.authors.outputs.csv }}" \
+            '{event:$event,body:$body,title:$title,mentions:$mentions,url:$url}' |
+          curl -s -X POST -H 'Content-Type: application/json' \
+               --data @- "$SLACK_WEBHOOK_URL"

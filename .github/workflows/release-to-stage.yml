@@ -1,4 +1,9 @@
-name: "Develop → stage PR"
+name: "Promote develop → stage (PR + Slack)"
+
+# 👇 Give the workflow token the scopes it needs
+permissions:
+  contents: read          # checkout + gh api
+  pull-requests: write    # create / edit PRs, request reviewers
 
 on:
   workflow_dispatch:
@@ -14,57 +19,51 @@ on:
 
 env:
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
+  GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}   # shared by all steps
 
 jobs:
   promote:
     runs-on: ubuntu-latest
 
     steps:
-      # 1  Check out the repo so the gh CLI can compare branches
+      # 1  Fetch repo so gh can diff branches
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        with: { fetch-depth: 0 }
 
-      # 2  Create the PR develop → stage
-      - name: Create PR
+      # 2  Create PR develop → stage
+      - name: Create pull request
         id: pr
         run: |
-          PR_URL=$(gh pr create \
-              --head develop \
-              --base stage \
-              --title "${{ github.event.inputs.pr_title }}" \
-              --body  "${{ github.event.inputs.pr_body }}" \
-              --label "environment:stage")
-          echo "url=$PR_URL"   >>"$GITHUB_OUTPUT"
-          echo "number=${PR_URL##*/}" >>"$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          url=$(gh pr create \
+                 --head develop \
+                 --base stage  \
+                 --title "${{ github.event.inputs.pr_title }}" \
+                 --body  "${{ github.event.inputs.pr_body }}" \
+                 --label "environment:stage")
+          echo "url=$url" >>"$GITHUB_OUTPUT"
+          echo "number=${url##*/}" >>"$GITHUB_OUTPUT"
 
-      # 3  Get the unique commit authors and request their review
-      - name: Collect authors and request review
-        id: authors
+      # 3  Find unique commit authors and request their review
+      - name: Add commit authors as reviewers
+        id: reviewers
         run: |
-          owner=$(cut -d/ -f1 <<<"$GITHUB_REPOSITORY")
-          repo=$(cut -d/ -f2 <<<"$GITHUB_REPOSITORY")
-          authors=$(gh api repos/$owner/$repo/pulls/${{ steps.pr.outputs.number }}/commits |
-                    jq -r '.[].author.login' | sort -u | tr '\n' ',' | sed 's/,$//')
+          commits=$(gh api repos/${{ github.repository }}/pulls/${{ steps.pr.outputs.number }}/commits)
+          authors=$(jq -r '.[].author.login' <<<"$commits" | sort -u | tr '\n' ',' | sed 's/,$//')
           if [ -n "$authors" ]; then
             gh pr edit ${{ steps.pr.outputs.number }} --add-reviewer "$authors"
           fi
           echo "csv=$authors" >>"$GITHUB_OUTPUT"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 4  Post the generic Slack message via Workflow‑Builder webhook
-      - name: Notify Slack
+      # 4  Notify Slack via your generic Workflow‑Builder webhook
+      - name: Send Slack notification
         run: |
           jq -n \
             --arg event    "pr_created" \
             --arg title    "${{ github.event.inputs.pr_title }}" \
             --arg url      "${{ steps.pr.outputs.url }}" \
             --arg body     "${{ github.event.inputs.pr_body }}" \
-            --arg mentions "${{ steps.authors.outputs.csv }}" \
+            --arg mentions "${{ steps.reviewers.outputs.csv }}" \
             '{event:$event,body:$body,title:$title,mentions:$mentions,url:$url}' |
           curl -s -X POST -H 'Content-Type: application/json' \
                --data @- "$SLACK_WEBHOOK_URL"

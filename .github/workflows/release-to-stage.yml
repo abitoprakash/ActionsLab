@@ -1,9 +1,8 @@
 name: "Create develop -> Stage PR"
 
-# Required scopes for the automatically‑generated GITHUB_TOKEN
 permissions:
-  contents: read          # checkout + gh api
-  pull-requests: write    # create / edit PRs, request reviewers
+  contents: read
+  pull-requests: write
 
 on:
   workflow_dispatch:
@@ -26,43 +25,63 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1  Ensure both branches are present for gh diff
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      # 1 Checkout code so we can read the mapping JSON
+      - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      # 2  Create the PR from develop to stage
+      # 2 Open the cross‑branch PR
       - name: Open pull request
         id: pr
         run: |
           url=$(gh pr create \
-                   --head develop \
-                   --base stage  \
-                   --title "${{ github.event.inputs.pr_title }}" \
-                   --body  "${{ github.event.inputs.pr_body }}")
+            --head develop --base stage \
+            --title "${{ github.event.inputs.pr_title }}" \
+            --body  "${{ github.event.inputs.pr_body }}")
           echo "url=$url" >>"$GITHUB_OUTPUT"
           echo "number=${url##*/}" >>"$GITHUB_OUTPUT"
 
-      # 3  Collect unique commit authors and request their review
+      # 3 Collect unique commit authors and request review
       - name: Add commit authors as reviewers
         id: reviewers
         run: |
           commits=$(gh api repos/${{ github.repository }}/pulls/${{ steps.pr.outputs.number }}/commits)
-          authors=$(jq -r '.[].author.login' <<<"$commits" | sort -u | tr '\n' ',' | sed 's/,$//')
-          if [ -n "$authors" ]; then
-            gh pr edit ${{ steps.pr.outputs.number }} --add-reviewer "$authors"
+          authors=$(jq -r '.[].author.login,.[].commit.author.email' <<<"$commits" | sort -u)
+          csv=$(echo "$authors" | tr '\n' ',' | sed 's/,$//')
+          if [ -n "$csv" ]; then
+            gh pr edit ${{ steps.pr.outputs.number }} --add-reviewer "$csv"
           fi
-          echo "csv=$authors" >>"$GITHUB_OUTPUT"
+          echo "csv=$csv" >>"$GITHUB_OUTPUT"
 
-      # 4  Notify Slack through your generic Workflow‑Builder webhook
+      # 4 Map reviewers to Slack IDs / handles
+      - name: Map to Slack mentions
+        id: mentions
+        run: |
+          mapfile -t list < <(echo "${{ steps.reviewers.outputs.csv }}" | tr ',' '\n')
+          declare -a mentions
+          for id in "${list[@]}"; do
+            # look up by login or email in the mapping JSON
+            slack=$(jq -r --arg key "$id" '.[ $key ] // empty' .github/slack-user-map.json || true)
+            if [[ -n "$slack" ]]; then
+              mentions+=("<@$slack>")
+            else
+              mentions+=("$id")              # fallback: show GitHub id
+            fi
+          done
+          mention_str=$(IFS=' '; echo "${mentions[*]}")
+          echo "list=$mention_str" >>"$GITHUB_OUTPUT"
+
+      # 5 Post the catchy, professional Slack message
       - name: Notify Slack
         run: |
+          pr_link="<${{ steps.pr.outputs.url }}|PR #${{ steps.pr.outputs.number }}>"
+          body="👥 *Reviewers*: ${{ steps.mentions.outputs.list }}"
+          [[ -n "${{ github.event.inputs.pr_body }}" ]] && body+="\n📝 ${{ github.event.inputs.pr_body }}"
           jq -n \
-            --arg event    "pr_created" \
-            --arg title    "${{ github.event.inputs.pr_title }}" \
-            --arg url      "${{ steps.pr.outputs.url }}" \
-            --arg body     "${{ github.event.inputs.pr_body }}" \
-            --arg mentions "${{ steps.reviewers.outputs.csv }}" \
+            --arg event "pr_created" \
+            --arg title ":rocket: Develop → Stage PR created" \
+            --arg url   "$pr_link" \
+            --arg body  "$body" \
+            --arg mentions "${{ steps.mentions.outputs.list }}" \
             '{event:$event,body:$body,title:$title,mentions:$mentions,url:$url}' |
           curl -s -X POST -H 'Content-Type: application/json' \
                --data @- "$SLACK_RELEASE_WORKFLOW_URL"

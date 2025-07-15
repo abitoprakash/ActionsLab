@@ -25,12 +25,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Check out repo (contains slack-user-map.json)
+      # 1  Checkout repo (brings in slack-user-map.json)
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      # 2️⃣ Build PR description (add workflow‑run link)
-      - name: Compose PR description
+      # 2  Compose PR description (append workflow run link)
+      - name: Build PR description
         id: desc
         run: |
           WF_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -39,21 +39,21 @@ jobs:
           else
             DESC="Automatically generated PR.\nWorkflow run → ${WF_URL}"
           fi
-          printf '%s' "$DESC" | sed -e 's/%/%25/g' -e 's/\n/%0A/g' \
-                                     -e 's/\r/%0D/g' >>"$GITHUB_OUTPUT"
+          printf '%s' "$DESC" | sed -e 's/%/%25/g' -e 's/\n/%0A/g' -e 's/\r/%0D/g' \
+            | awk '{print "text="$0}' >>"$GITHUB_OUTPUT"
 
-      # 3️⃣ Create the PR (develop → stage) and capture URL / number
+      # 3  Create PR develop → stage
       - name: Open pull request
         id: pr
         run: |
           PR_URL=$(gh pr create \
                      --head develop --base stage \
                      --title "${{ github.event.inputs.pr_title }}" \
-                     --body  "${{ steps.desc.outputs.* }}" | tail -n1)
-          echo "url=$PR_URL"        >>"$GITHUB_OUTPUT"
+                     --body  "${{ steps.desc.outputs.text }}" | tail -n1)
+          echo "url=$PR_URL" >>"$GITHUB_OUTPUT"
           echo "number=${PR_URL##*/}" >>"$GITHUB_OUTPUT"
 
-      # 4️⃣ Collect commit authors
+      # 4  Collect commit authors
       - name: Gather commit authors
         id: authors
         run: |
@@ -61,42 +61,41 @@ jobs:
           IDS=$(jq -r '.[] | .author.login?, .commit.author.email?' <<<"$COMMITS" | grep -v null | sort -u)
           echo "all=$(echo "$IDS" | tr '\n' ',' | sed 's/,$//')" >>"$GITHUB_OUTPUT"
 
-      # 5️⃣ Map to Slack IDs + request reviewers
-      - name: Map mentions & request reviewers
-        id: mentions
+      # 5  Map to Slack handles & request GH reviewers
+      - name: Map to Slack handles and request reviewers
+        id: reviewers
         run: |
           mapfile -t ARR < <(echo "${{ steps.authors.outputs.all }}" | tr ',' '\n')
 
-          declare -a SLACK_IDS
+          declare -a HANDLES
           declare -a GH_REVIEWERS
 
           for IDENT in "${ARR[@]}"; do
             [[ "$IDENT" != *"@"* ]] && GH_REVIEWERS+=("$IDENT")
 
-            S_ID=$(jq -r --arg k "$IDENT" '.[ $k ] // empty' .github/slack-user-map.json || true)
-            if [[ -n "$S_ID" ]]; then
-              SLACK_IDS+=("<@$S_ID>")
+            HANDLE=$(jq -r --arg k "$IDENT" '.[ $k ] // empty' .github/slack-user-map.json || true)
+            if [[ -n "$HANDLE" ]]; then
+              HANDLES+=("@$HANDLE")
             elif [[ "$IDENT" == *"@"* ]]; then
-              SLACK_IDS+=("$(cut -d@ -f1 <<<"$IDENT")")
+              HANDLES+=("@$(cut -d@ -f1 <<<"$IDENT")")
             else
-              SLACK_IDS+=("$IDENT")
+              HANDLES+=("@$IDENT")
             fi
           done
 
           [[ ${#GH_REVIEWERS[@]} -gt 0 ]] && \
             gh pr edit ${{ steps.pr.outputs.number }} --add-reviewer "$(IFS=','; echo "${GH_REVIEWERS[*]}")"
 
-          echo "list=$(IFS=' '; echo "${SLACK_IDS[*]}")" >>"$GITHUB_OUTPUT"
+          echo "mentions=$(IFS=' '; echo "${HANDLES[*]}")" >>"$GITHUB_OUTPUT"
 
-      # 6️⃣ Send payload to Slack (title, body, url, mentions)
+      # 6  Send payload to Slack: title, body, url
       - name: Notify Slack
         run: |
-          BODY="👥 *Please review*: ${!steps.mentions.outputs.list}"
+          BODY="👥 *Please review*: ${{ steps.reviewers.outputs.mentions }}"
           jq -n \
             --arg title ":rocket: Develop → Stage PR #${{ steps.pr.outputs.number }} created" \
             --arg body  "$BODY" \
             --arg url   "${{ steps.pr.outputs.url }}" \
-            --arg mentions "${{ steps.mentions.outputs.list }}" \
-            '{title:$title,body:$body,url:$url,mentions:$mentions}' |
+            '{title:$title,body:$body,url:$url}' |
           curl -s -X POST -H 'Content-Type: application/json' \
                --data @- "$SLACK_RELEASE_WORKFLOW_URL"

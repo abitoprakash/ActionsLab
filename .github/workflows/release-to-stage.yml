@@ -39,8 +39,7 @@ jobs:
                  --head develop \
                  --base stage  \
                  --title "${{ github.event.inputs.pr_title }}" \
-                 --body  "${{ github.event.inputs.pr_body }}" \
-                 --label "environment:stage")
+                 --body  "${{ github.event.inputs.pr_body }}" \")
           echo "url=$url" >>"$GITHUB_OUTPUT"
           echo "number=${url##*/}" >>"$GITHUB_OUTPUT"
 

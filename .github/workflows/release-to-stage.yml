@@ -1,6 +1,6 @@
-name: "Promote develop → stage (PR + Slack)"
+name: "Create develop -> Stage PR"
 
-# 👇 Give the workflow token the scopes it needs
+# Required scopes for the automatically‑generated GITHUB_TOKEN
 permissions:
   contents: read          # checkout + gh api
   pull-requests: write    # create / edit PRs, request reviewers
@@ -18,32 +18,32 @@ on:
         type: string
 
 env:
-  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
-  GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}   # shared by all steps
+  SLACK_RELEASE_WORKFLOW_URL: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
+  GH_TOKEN:                    ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   promote:
     runs-on: ubuntu-latest
 
     steps:
-      # 1  Fetch repo so gh can diff branches
-      - name: Checkout
+      # 1  Ensure both branches are present for gh diff
+      - name: Checkout repository
         uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      # 2  Create PR develop → stage
-      - name: Create pull request
+      # 2  Create the PR from develop to stage
+      - name: Open pull request
         id: pr
         run: |
           url=$(gh pr create \
-                 --head develop \
-                 --base stage  \
-                 --title "${{ github.event.inputs.pr_title }}" \
-                 --body  "${{ github.event.inputs.pr_body }}" \")
+                   --head develop \
+                   --base stage  \
+                   --title "${{ github.event.inputs.pr_title }}" \
+                   --body  "${{ github.event.inputs.pr_body }}")
           echo "url=$url" >>"$GITHUB_OUTPUT"
           echo "number=${url##*/}" >>"$GITHUB_OUTPUT"
 
-      # 3  Find unique commit authors and request their review
+      # 3  Collect unique commit authors and request their review
       - name: Add commit authors as reviewers
         id: reviewers
         run: |
@@ -54,8 +54,8 @@ jobs:
           fi
           echo "csv=$authors" >>"$GITHUB_OUTPUT"
 
-      # 4  Notify Slack via your generic Workflow‑Builder webhook
-      - name: Send Slack notification
+      # 4  Notify Slack through your generic Workflow‑Builder webhook
+      - name: Notify Slack
         run: |
           jq -n \
             --arg event    "pr_created" \
@@ -65,4 +65,4 @@ jobs:
             --arg mentions "${{ steps.reviewers.outputs.csv }}" \
             '{event:$event,body:$body,title:$title,mentions:$mentions,url:$url}' |
           curl -s -X POST -H 'Content-Type: application/json' \
-               --data @- "$SLACK_WEBHOOK_URL"
+               --data @- "$SLACK_RELEASE_WORKFLOW_URL"

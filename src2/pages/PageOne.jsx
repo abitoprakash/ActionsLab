@@ -4,7 +4,7 @@ const PageOne = () => {
   return (
     <div
       onClick={() =>
-        console.log('Clicked without propersssss role or key event handlers')
+        console.log('Clicked without prper role or key event handlers')
       }
     >
       <h1 onClick={() => console.log('page 1')}>Page One</h1>

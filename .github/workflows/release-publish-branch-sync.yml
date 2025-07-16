@@ -68,25 +68,26 @@ jobs:
           fi
 
       # 5️⃣  Notify Slack – always send non‑empty values
+      # 5️⃣  Notify Slack
       - name: Notify Slack
         run: |
           title="Release ${{ github.event.release.tag_name }} published"
           body="Release notes: ${{ github.event.release.html_url }}"
           actor="${{ github.actor }}"
 
-          # Capture URLs or fallback text
-          stagePR="${{ steps.masterToStage.outputs.url || 'N/A' }}"
-          developPR="${{ steps.stageToDevelop.outputs.url || 'N/A' }}"
+          # ensure non‑empty strings
+          postReleaseStagePR="${{ steps.masterToStage.outputs.url || 'n/a' }}"
+          postReleaseDevelopPR="${{ steps.stageToDevelop.outputs.url || 'n/a' }}"
 
           jq -n \
-            --arg event   "post_release" \
-            --arg title   "$title" \
-            --arg body    "$body" \
-            --arg actor   "$actor" \
-            --arg postReleaseStagePR   "$stagePR" \
-            --arg postReleaseDevelopPR "$developPR" \
+            --arg event                "post_release" \
+            --arg title                "$title" \
+            --arg body                 "$body" \
+            --arg actor                "$actor" \
+            --arg postReleaseStagePR   "$postReleaseStagePR" \
+            --arg postReleaseDevelopPR "$postReleaseDevelopPR" \
             '{event:$event,title:$title,body:$body,actor:$actor,postReleaseStagePR:$postReleaseStagePR,postReleaseDevelopPR:$postReleaseDevelopPR}' |
-          curl -s -X POST -H 'Content-Type: application/json' \
-               --data @- "$SLACK_WEBHOOK_URL"
+          curl -s -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+
 
 

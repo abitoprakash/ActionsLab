@@ -1,0 +1,41 @@
+changelog:
+  template: |
+    ## Release {{tag_name}} – {{date}}
+
+    {{CHANGELOG}}
+
+    ---
+
+    **Full diff**: {{compare_url}}
+    **Contributors**: {{contributor_list}}
+
+  categories:
+    - title: "Features"
+      labels: ["feature", "enhancement"]
+      changes-template: "* {{pull_request.title}} (#{pull_request.number})"
+
+    - title: "Bug fixes"
+      labels: ["bug", "fix"]
+
+    - title: "Performance"
+      labels: ["perf", "performance"]
+
+    - title: "Security"
+      labels: ["security"]
+
+    - title: "Breaking changes"
+      labels: ["breaking"]
+
+    - title: "Dependencies"
+      labels: ["dependencies"]
+
+    - title: "Documentation"
+      labels: ["docs"]
+
+    - title: "Chores"
+      labels: ["chore", "refactor"]
+
+    - title: "Miscellaneous"
+      labels: ["*"]                 # anything else
+      exclude:
+        labels: ["skip‑changelog"]

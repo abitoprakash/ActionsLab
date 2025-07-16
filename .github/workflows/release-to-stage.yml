@@ -1,4 +1,4 @@
-name: "Create develop -> Stage PR"
+name: "Create environment PR"
 
 permissions:
   contents: read
@@ -7,12 +7,19 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      direction:
+        description: "Select release PR type"
+        required: true
+        type: choice
+        options:
+          - develop-to-stage
+          - stage-to-master
       pr_title:
         description: "Pull‑request title"
         required: true
         type: string
       pr_body:
-        description: "Optional PR description (appears in GitHub)"
+        description: "Optional PR description"
         required: false
         type: string
 
@@ -21,16 +28,38 @@ env:
   GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  create_dev_stage_pr:
+  create_environment_pr:
     runs-on: ubuntu-latest
 
     steps:
-    # 1️⃣  Checkout repo
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
-    # 2️⃣  Build PR description, append workflow‑run link
+    # 1️⃣  Determine source/target branches and label text
+    - name: Set branch variables
+      id: branches
+      run: |
+        case "${{ github.event.inputs.direction }}" in
+          develop-to-stage)
+            SRC=develop
+            DST=stage
+            LABEL="Develop -> Stage"
+            ;;
+          stage-to-master)
+            SRC=stage
+            DST=master
+            LABEL="Stage -> Master"
+            ;;
+          *)
+            echo "Unsupported direction"; exit 1
+            ;;
+        esac
+        echo "src=$SRC"    >>"$GITHUB_OUTPUT"
+        echo "dst=$DST"    >>"$GITHUB_OUTPUT"
+        echo "label=$LABEL">>"$GITHUB_OUTPUT"
+
+    # 2️⃣  Build PR description (append workflow‑run link)
     - name: Compose PR description
       id: prdesc
       shell: bash
@@ -47,20 +76,20 @@ jobs:
           echo EOF
         } >>"$GITHUB_OUTPUT"
 
-    # 3️⃣  Create the PR develop → stage, capture URL & number
-    - name: Create PR
+    # 3️⃣  Create the PR
+    - name: Create pull request
       id: pr
       shell: bash
       run: |
         PR_URL=$(gh pr create \
-                   --head develop \
-                   --base stage  \
+                   --head "${{ steps.branches.outputs.src }}" \
+                   --base "${{ steps.branches.outputs.dst }}" \
                    --title "${{ github.event.inputs.pr_title }}" \
                    --body  "${{ steps.prdesc.outputs.text }}" | tail -n1)
-        echo "url=$PR_URL"        >>"$GITHUB_OUTPUT"
-        echo "number=${PR_URL##*/}" >>"$GITHUB_OUTPUT"
+        echo "url=$PR_URL"           >>"$GITHUB_OUTPUT"
+        echo "number=${PR_URL##*/}"  >>"$GITHUB_OUTPUT"
 
-    # 4️⃣  Add commit authors as reviewers
+    # 4️⃣  Add commit authors (GitHub logins) as reviewers
     - name: Add reviewers
       shell: bash
       run: |
@@ -70,25 +99,22 @@ jobs:
           gh pr edit ${{ steps.pr.outputs.number }} --add-reviewer "$LOGINS"
         fi
 
-    # 5️⃣  Get e‑mail (or fallback login) for the actor
-    - name: Resolve actor e‑mail
+    # 5️⃣  Determine actor e‑mail or fallback to login
+    - name: Resolve actor identity
       id: actor
       shell: bash
       run: |
-        ACTOR="${{ github.actor }}"
-        EMAIL=$(gh api users/"$ACTOR" --jq '.email' 2>/dev/null || echo "")
-        if [[ -z "$EMAIL" || "$EMAIL" == "null" ]]; then
-          EMAIL="$ACTOR"   # fallback to login
-        fi
-        echo "email=$EMAIL" >>"$GITHUB_OUTPUT"
+        EMAIL=$(gh api users/${{ github.actor }} --jq '.email' 2>/dev/null || echo "")
+        [[ -z "$EMAIL" || "$EMAIL" == "null" ]] && EMAIL="${{ github.actor }}"
+        echo "name=$EMAIL" >>"$GITHUB_OUTPUT"
 
-    # 6️⃣  Notify Slack (title, body, actor)
+    # 6️⃣  Notify Slack (plain‑text fields)
     - name: Notify Slack
       shell: bash
       run: |
-        title="🚀 Develop → Stage PR #${{ steps.pr.outputs.number }} created"
+        title="${{ steps.branches.outputs.label }} PR #${{ steps.pr.outputs.number }} created"
         body="PR link: ${{ steps.pr.outputs.url }}"
-        actor="${{ steps.actor.outputs.email }}"
+        actor="${{ steps.actor.outputs.name }}"
 
         jq -n \
           --arg title "$title" \

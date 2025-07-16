@@ -48,7 +48,7 @@ jobs:
             ;;
           stage-to-master)
             SRC=stage
-            DST=main
+            DST=master
             LABEL="Stage -> Master"
             ;;
           *)

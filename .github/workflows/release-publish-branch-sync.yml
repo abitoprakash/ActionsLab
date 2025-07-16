@@ -73,10 +73,10 @@ jobs:
             --arg event     "post_release" \
             --arg title     "Release ${{ github.event.release.tag_name }} published" \
             --arg body      "Release notes: ${{ github.event.release.html_url }}" \
-            --arg stagePR   "${{ steps.masterToStage.outputs.url }}" \
-            --arg developPR "${{ steps.stageToDevelop.outputs.url }}" \
+            --arg postReleaseStagePR   "${{ steps.masterToStage.outputs.url }}" \
+            --arg postReleaseDevelopPR "${{ steps.stageToDevelop.outputs.url }}" \
             --arg actor     "${{ github.actor }}" \
-            '{event:$event,title:$title,body:$body,postReleaseStagePR:$stagePR,postReleaseDevelopPR:$developPR,actor:$actor}' |
+            '{event:$event,title:$title,body:$body,postReleaseStagePR:$postReleaseStagePR,postReleaseDevelopPR:$postReleaseDevelopPR,actor:$actor}' |
           curl -s -X POST -H 'Content-Type: application/json' \
                --data @- "$SLACK_WEBHOOK_URL"
 

@@ -1,0 +1,6 @@
+template: |
+  ## Changes
+
+  $CHANGES
+change-template: '- $TITLE (#$NUMBER) by @$AUTHOR'
+no-changes-template: 'No changes in this release.'

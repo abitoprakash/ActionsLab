@@ -33,7 +33,7 @@ jobs:
     - uses: actions/checkout@v4
       with: { fetch-depth: 0 }
 
-    # 1️⃣ pick branches based on direction
+    # 1️⃣  Set branch vars from direction
     - name: Select branches
       id: branches
       run: |
@@ -45,14 +45,14 @@ jobs:
             ;;
           stage-to-master)
             echo "src=stage"    >>"$GITHUB_OUTPUT"
-            echo "dst=main"     >>"$GITHUB_OUTPUT"   # adapt if your prod branch is master
+            echo "dst=master"   >>"$GITHUB_OUTPUT"   # prod branch is master
             echo "label=Stage -> Master" >>"$GITHUB_OUTPUT"
             ;;
           *)
             echo "Unsupported direction"; exit 1
         esac
 
-    # 2️⃣ compose PR description
+    # 2️⃣  Craft PR description
     - name: Compose description
       id: prdesc
       run: |
@@ -64,30 +64,54 @@ jobs:
         fi
         { echo 'text<<EOF'; echo -e "$DESC"; echo EOF; } >>"$GITHUB_OUTPUT"
 
-    # 3️⃣ create PR
-    - name: Create PR
+    # 3️⃣  Create PR or reuse existing one
+    - name: Create or reuse PR
       id: pr
       run: |
-        PR_URL=$(gh pr create \
-                   --head "${{ steps.branches.outputs.src }}" \
-                   --base "${{ steps.branches.outputs.dst }}" \
-                   --title "${{ github.event.inputs.pr_title }}" \
-                   --body  "${{ steps.prdesc.outputs.text }}" | tail -n1)
-        echo "url=$PR_URL"          >>"$GITHUB_OUTPUT"
-        echo "number=${PR_URL##*/}" >>"$GITHUB_OUTPUT"
+        set +e
+        OUTPUT=$(gh pr create \
+                    --head "${{ steps.branches.outputs.src }}" \
+                    --base "${{ steps.branches.outputs.dst }}" \
+                    --title "${{ github.event.inputs.pr_title }}" \
+                    --body  "${{ steps.prdesc.outputs.text }}" 2>&1)
+        STATUS=$?
+        set -e
 
-    # 4️⃣ add valid commit authors as reviewers
+        if [[ $STATUS -eq 0 ]]; then
+          PR_URL="$OUTPUT"
+        else
+          echo "gh pr create returned non‑zero (possibly already exists). Output:"
+          echo "$OUTPUT"
+          # Try to grab URL from stdout/stderr
+          PR_URL=$(echo "$OUTPUT" | grep -o 'https://[^\ ]*pull/[0-9]*' | head -n1)
+          if [[ -z "$PR_URL" ]]; then
+            echo "Falling back to gh pr list…"
+            PR_URL=$(gh pr list --state open \
+                       --base "${{ steps.branches.outputs.dst }}" \
+                       --head "${{ steps.branches.outputs.src }}" \
+                       --json url --jq '.[0].url' || true)
+          fi
+          if [[ -z "$PR_URL" ]]; then
+            echo "Could not determine existing PR URL"; exit 1
+          fi
+        fi
+
+        PR_NUM="${PR_URL##*/}"
+        echo "url=$PR_URL"      >>"$GITHUB_OUTPUT"
+        echo "number=$PR_NUM"   >>"$GITHUB_OUTPUT"
+
+    # 4️⃣  Add valid commit authors as reviewers (skip bots)
     - name: Add reviewers
       run: |
         COMMITS=$(gh api repos/${{ github.repository }}/pulls/${{ steps.pr.outputs.number }}/commits)
         LOGINS=$(jq -r '.[] | .author.login' <<<"$COMMITS" |
-                 grep -v -E '(^github-actions\[bot\]$|^$)' | sort -u | tr '\n' ',' | sed 's/,$//')
+                 grep -v -E '(^github-actions\[bot\]$|^$)' |
+                 sort -u | tr '\n' ',' | sed 's/,$//')
         if [[ -n "$LOGINS" ]]; then
-          # attempt; don’t fail job if any handle is invalid
           gh pr edit ${{ steps.pr.outputs.number }} --add-reviewer "$LOGINS" || true
         fi
 
-    # 5️⃣ resolve actor identity (email or login)
+    # 5️⃣  Determine actor identity
     - name: Resolve actor
       id: actor
       run: |
@@ -95,7 +119,7 @@ jobs:
         [[ -z "$EMAIL" || "$EMAIL" == "null" ]] && EMAIL="${{ github.actor }}"
         echo "name=$EMAIL" >>"$GITHUB_OUTPUT"
 
-    # 6️⃣ post Slack message
+    # 6️⃣  Notify Slack (plain text only)
     - name: Notify Slack
       run: |
         title="${{ steps.branches.outputs.label }} PR #${{ steps.pr.outputs.number }} created"
@@ -107,4 +131,5 @@ jobs:
           --arg body  "$body" \
           --arg actor "$actor" \
           '{title:$title,body:$body,actor:$actor}' |
-        curl -s -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+        curl -s -X POST -H 'Content-Type: application/json' \
+             --data @- "$SLACK_WEBHOOK_URL"

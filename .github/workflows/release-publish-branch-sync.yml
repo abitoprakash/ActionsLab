@@ -68,7 +68,7 @@ jobs:
             --arg stagePR   "${{ steps.masterToStage.outputs.url }}" \
             --arg developPR "${{ steps.stageToDevelop.outputs.url }}" \
             --arg actor     "${{ github.actor }}" \
-            '{event:$event,title:$title,body:$body,stagePR:$stagePR,developPR:$developPR,actor:$actor}' |
+            '{event:$event,title:$title,body:$body,postReleaseStagePR:$stagePR,postReleaseDevelopPR:$developPR,actor:$actor}' |
           curl -s -X POST -H 'Content-Type: application/json' \
                --data @- "$SLACK_WEBHOOK_URL"
 

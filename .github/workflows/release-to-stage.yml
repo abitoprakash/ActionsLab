@@ -127,9 +127,10 @@ jobs:
         actor="${{ steps.actor.outputs.name }}"
 
         jq -n \
+          --arg event "create-release-pr" \
           --arg title "$title" \
           --arg body  "$body" \
           --arg actor "$actor" \
-          '{title:$title,body:$body,actor:$actor}' |
+          '{title:$title,body:$body,actor:$actor,event:$event}' |
         curl -s -X POST -H 'Content-Type: application/json' \
              --data @- "$SLACK_WEBHOOK_URL"

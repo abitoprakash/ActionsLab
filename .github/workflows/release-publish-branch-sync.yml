@@ -30,7 +30,7 @@ jobs:
 
       # 2️⃣  Open (or reuse) master → stage sync PR
       - name: Sync master → stage
-        id: m2s
+        id: masterToStage
         run: |
           TAG="${{ github.event.release.tag_name }}"
           EXIST=$(gh pr list --state open --head master --base stage --json url --jq '.[0].url')
@@ -45,10 +45,10 @@ jobs:
 
       # 3️⃣  Open (or reuse) stage → develop sync PR, referencing the first
       - name: Sync stage → develop
-        id: s2d
+        id: stageToDevelop
         run: |
           TAG="${{ github.event.release.tag_name }}"
-          MASTER_PR_URL="${{ steps.m2s.outputs.url }}"
+          MASTER_PR_URL="${{ steps.masterToStage.outputs.url }}"
           EXIST=$(gh pr list --state open --head stage --base develop --json url --jq '.[0].url')
           if [[ -n "$EXIST" ]]; then
             echo "url=$EXIST" >>"$GITHUB_OUTPUT"
@@ -59,15 +59,16 @@ jobs:
             echo "url=$NEW" >>"$GITHUB_OUTPUT"
           fi
 
-      # 4️⃣  Announce on Slack—including both PR links
       - name: Notify Slack
         run: |
-          TITLE="Release ${{ github.event.release.tag_name }} published"
-          BODY="Release notes → ${{ github.event.release.html_url }}\n\
-            Sync PRs:\n\
-            - master → stage: ${MASTER_PR:=${{ steps.m2s.outputs.url }}}\n\
-            - stage  → develop: ${STAGE_PR:=${{ steps.s2d.outputs.url }}}"
-                    ACTOR="${{ github.actor }}"
-            jq -n --arg title "$TITLE" --arg body "$BODY" --arg actor "$ACTOR" \
-                    '{title:$title,body:$body,actor:$actor}' |
-            curl -s -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+          jq -n \
+            --arg event     "post_release" \
+            --arg title     "Release ${{ github.event.release.tag_name }} published" \
+            --arg body      "Release notes: ${{ github.event.release.html_url }}" \
+            --arg stagePR   "${{ steps.masterToStage.outputs.url }}" \
+            --arg developPR "${{ steps.stageToDevelop.outputs.url }}" \
+            --arg actor     "${{ github.actor }}" \
+            '{event:$event,title:$title,body:$body,stagePR:$stagePR,developPR:$developPR,actor:$actor}' |
+          curl -s -X POST -H 'Content-Type: application/json' \
+               --data @- "$SLACK_WEBHOOK_URL"
+

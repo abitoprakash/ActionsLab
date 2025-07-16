@@ -25,10 +25,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    # 1️⃣  Checkout repo
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
+    # 2️⃣  Build PR description, append workflow‑run link
     - name: Compose PR description
       id: prdesc
       shell: bash
@@ -39,13 +41,13 @@ jobs:
         else
           DESC="Automatically created PR.\nWorkflow run → ${WF_URL}"
         fi
-        # Set output safely for multi‑line text
         {
           echo 'text<<EOF'
           echo -e "$DESC"
-          echo 'EOF'
+          echo EOF
         } >>"$GITHUB_OUTPUT"
 
+    # 3️⃣  Create the PR develop → stage, capture URL & number
     - name: Create PR
       id: pr
       shell: bash
@@ -58,6 +60,7 @@ jobs:
         echo "url=$PR_URL"        >>"$GITHUB_OUTPUT"
         echo "number=${PR_URL##*/}" >>"$GITHUB_OUTPUT"
 
+    # 4️⃣  Add commit authors as reviewers
     - name: Add reviewers
       shell: bash
       run: |
@@ -67,19 +70,30 @@ jobs:
           gh pr edit ${{ steps.pr.outputs.number }} --add-reviewer "$LOGINS"
         fi
 
+    # 5️⃣  Get e‑mail (or fallback login) for the actor
+    - name: Resolve actor e‑mail
+      id: actor
+      shell: bash
+      run: |
+        ACTOR="${{ github.actor }}"
+        EMAIL=$(gh api users/"$ACTOR" --jq '.email' 2>/dev/null || echo "")
+        if [[ -z "$EMAIL" || "$EMAIL" == "null" ]]; then
+          EMAIL="$ACTOR"   # fallback to login
+        fi
+        echo "email=$EMAIL" >>"$GITHUB_OUTPUT"
+
+    # 6️⃣  Notify Slack (title, body, actor)
     - name: Notify Slack
       shell: bash
       run: |
         title="🚀 Develop → Stage PR #${{ steps.pr.outputs.number }} created"
-        body="Workflow triggered by: ${{ github.actor }}"
-        link="${{ steps.pr.outputs.url }}"
-        linkLabel="View PR"
+        body="PR link: ${{ steps.pr.outputs.url }}"
+        actor="${{ steps.actor.outputs.email }}"
 
         jq -n \
           --arg title "$title" \
-          --arg body "$body" \
-          --arg link "$link" \
-          --arg linkLabel "$linkLabel" \
-          '{title:$title,body:$body,link:$link,linkLabel:$linkLabel}' |
+          --arg body  "$body" \
+          --arg actor "$actor" \
+          '{title:$title,body:$body,actor:$actor}' |
         curl -s -X POST -H 'Content-Type: application/json' \
              --data @- "$SLACK_WEBHOOK_URL"

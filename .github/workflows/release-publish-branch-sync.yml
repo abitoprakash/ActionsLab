@@ -23,10 +23,18 @@ jobs:
       # 1️⃣  Generate notes only if QA didn’t write any
       - name: Generate notes (if body empty)
         run: |
-          BODY=$(gh api repos/${{ github.repository }}/releases/${{ github.event.release.id }} --jq .body)
+          REL_ID="${{ github.event.release.id }}"
+          BODY=$(gh api repos/${{ github.repository }}/releases/$REL_ID --jq .body)
           if [[ -z "$BODY" ]]; then
-            gh release edit "${{ github.event.release.tag_name }}" --generate-notes
+            NOTES=$(gh api --method POST \
+                     repos/${{ github.repository }}/releases/$REL_ID/generate-notes \
+                     --jq .body)
+            echo "$NOTES" >_notes.md
+            gh release edit "${{ github.event.release.tag_name }}" --notes-file _notes.md
+          else
+            echo "Release notes already present — skipping generation."
           fi
+
 
       # 2️⃣  Open (or reuse) master → stage sync PR
       - name: Sync master → stage

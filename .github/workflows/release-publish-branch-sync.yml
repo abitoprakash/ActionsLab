@@ -67,13 +67,20 @@ jobs:
             echo "url=$NEW" >>"$GITHUB_OUTPUT"
           fi
 
-      # 5️⃣  Notify Slack – always send non‑empty values
+    # 5️⃣  Determine actor identity
+      - name: Resolve actor
+        id: actor
+        run: |
+          EMAIL=$(gh api users/${{ github.actor }} --jq '.email' 2>/dev/null || echo "")
+          [[ -z "$EMAIL" || "$EMAIL" == "null" ]] && EMAIL="${{ github.actor }}"
+          echo "name=$EMAIL" >>"$GITHUB_OUTPUT"
+
       # 5️⃣  Notify Slack
       - name: Notify Slack
         run: |
           title="Release ${{ github.event.release.tag_name }} published"
           body="Release notes: ${{ github.event.release.html_url }}"
-          actor="${{ github.actor }}"
+          actor="${{ steps.actor.outputs.email }}"
 
           # ensure non‑empty strings
           postReleaseStagePR="${{ steps.masterToStage.outputs.url || 'n/a' }}"

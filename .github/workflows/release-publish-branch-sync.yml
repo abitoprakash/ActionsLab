@@ -1,9 +1,10 @@
 name: "Post‑release automation"
 
 env:
-  STATUS_MERGED:     "Merged"
-  STATUS_REVIEW:     "Needs Review"
-  STATUS_CONFLICT:   "Has conflicts"
+  STATUS_MERGED:        "Merged"
+  STATUS_AUTO_APPROVED: "Auto‑approved"
+  STATUS_REVIEW:        "Needs Review"
+  STATUS_CONFLICT:      "Has conflicts"
 
   GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
@@ -47,16 +48,19 @@ jobs:
       run: |
         cat > auto_handle.sh <<'SH'
         pr=$1; result_var=$2
-        gh pr merge $pr --merge --auto
+        gh pr merge $pr --merge --auto        # enable GitHub auto‑merge
         mergeable=$(gh pr view $pr --json mergeable --jq .mergeable)
+
         if [[ $mergeable == "CONFLICTING" ]]; then
-          echo "$result_var=$STATUS_CONFLICT" >>"$GITHUB_OUTPUT"; exit 0
+          echo "$result_var=$STATUS_CONFLICT" >>"$GITHUB_OUTPUT"
+          exit 0
         fi
+
         if gh pr diff $pr | grep -qE '^diff'; then
           echo "$result_var=$STATUS_REVIEW"  >>"$GITHUB_OUTPUT"
         else
           gh pr review $pr --approve --body "Auto‑approved – no file changes."
-          echo "$result_var=$STATUS_REVIEW"  >>"$GITHUB_OUTPUT"
+          echo "$result_var=$STATUS_AUTO_APPROVED" >>"$GITHUB_OUTPUT"
         fi
         SH
         chmod +x auto_handle.sh
@@ -71,8 +75,8 @@ jobs:
         [[ -z $url ]] && url=$(gh pr create --head master --base stage \
                            --title "Sync master to stage after $tag" \
                            --body  "Automated sync PR after $tag." | tail -n1)
-        echo "URL=$url"          >>"$GITHUB_OUTPUT"
-        echo "NUM=${url##*/}"    >>"$GITHUB_OUTPUT"
+        echo "URL=$url"       >>"$GITHUB_OUTPUT"
+        echo "NUM=${url##*/}" >>"$GITHUB_OUTPUT"
 
     - name: Evaluate PR (master → stage)
       id: status_master_to_stage
@@ -88,21 +92,24 @@ jobs:
         [[ -z $url ]] && url=$(gh pr create --head stage --base develop \
                            --title "Sync stage to develop after $tag" \
                            --body  "Merge **after** the master → stage PR is merged." | tail -n1)
-        echo "URL=$url"          >>"$GITHUB_OUTPUT"
-        echo "NUM=${url##*/}"    >>"$GITHUB_OUTPUT"
+        echo "URL=$url"       >>"$GITHUB_OUTPUT"
+        echo "NUM=${url##*/}" >>"$GITHUB_OUTPUT"
 
     - name: Auto‑approve stage → develop if safe
       id: status_stage_to_develop
       shell: bash
       run: |
         echo "STATUS_STAGE_TO_DEVELOP=$STATUS_REVIEW" >>"$GITHUB_OUTPUT"
-        [[ "${{ steps.status_master_to_stage.outputs.STATUS_MASTER_TO_STAGE }}" != "$STATUS_REVIEW" ]] && exit 0
-        for i in {1..30}; do
+
+        [[ "${{ steps.status_master_to_stage.outputs.STATUS_MASTER_TO_STAGE }}" != "$STATUS_AUTO_APPROVED" ]] && exit 0
+
+        for i in {1..10}; do                               # wait up to 90 s
           state=$(gh pr view "${{ steps.pr_master_to_stage.outputs.NUM }}" --json state --jq .state)
           [[ $state == "MERGED" ]] && break
           sleep 10
         done
         [[ $state != "MERGED" ]] && exit 0
+
         ./auto_handle.sh "${{ steps.pr_stage_to_develop.outputs.NUM }}" STATUS_STAGE_TO_DEVELOP
 
     # -----------------------------------------------------------------------
@@ -135,7 +142,7 @@ jobs:
       shell: bash
       run: |
         pr_stage="${{ steps.pr_master_to_stage.outputs.URL }} – ${{ steps.final_statuses.outputs.MASTER_STAGE_STATUS }}"
-         pr_develop="${{ steps.pr_stage_to_develop.outputs.URL }} – ${{ steps.final_statuses.outputs.STAGE_DEVELOP_STATUS }}"
+        pr_develop="${{ steps.pr_stage_to_develop.outputs.URL }} – ${{ steps.final_statuses.outputs.STAGE_DEVELOP_STATUS }}"
 
         payload=$(jq -n \
           --arg event  "post_release" \
@@ -143,7 +150,7 @@ jobs:
           --arg body   "Release notes: ${{ github.event.release.html_url }}" \
           --arg actor  "${{ steps.actor_email.outputs.email }}" \
           --arg postReleaseStagePR   "$pr_stage" \
-          --arg postReleaseDevelopPR "$ pr_develop" \
+          --arg postReleaseDevelopPR "$pr_develop" \
           '{event,title,body,actor,postReleaseStagePR,postReleaseDevelopPR}')
 
         echo "Slack payload to be sent:"
@@ -151,4 +158,3 @@ jobs:
 
         curl -s -X POST -H 'Content-Type: application/json' \
              --data "$payload" "$SLACK_WEBHOOK_URL"
-

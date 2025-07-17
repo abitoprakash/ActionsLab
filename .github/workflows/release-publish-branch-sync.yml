@@ -131,17 +131,24 @@ jobs:
 
     # -----------------------------------------------------------------------
     - name: Send Slack notification
-      id: slack_notify
+      id: notify_slack
       shell: bash
       run: |
-        pr1="${{ steps.pr_master_to_stage.outputs.URL }} – ${{ steps.final_statuses.outputs.MASTER_STAGE_STATUS }}"
-        pr2="${{ steps.pr_stage_to_develop.outputs.URL }} – ${{ steps.final_statuses.outputs.STAGE_DEVELOP_STATUS }}"
-        jq -n \
-          --arg event "post_release" \
-          --arg title "Release ${{ github.event.release.tag_name }} published" \
-          --arg body  "Release notes: ${{ github.event.release.html_url }}" \
-          --arg actor "${{ steps.actor_email.outputs.email }}" \
-          --arg postReleaseStagePR   "$pr1" \
-          --arg postReleaseDevelopPR "$pr2" \
-          '{event,title,body,actor,postReleaseStagePR,postReleaseDevelopPR}' |
-        curl -s -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+        pr_stage="${{ steps.pr_master_to_stage.outputs.URL }} – ${{ steps.final_statuses.outputs.MASTER_STAGE_STATUS }}"
+         pr_develop="${{ steps.pr_stage_to_develop.outputs.URL }} – ${{ steps.final_statuses.outputs.STAGE_DEVELOP_STATUS }}"
+
+        payload=$(jq -n \
+          --arg event  "post_release" \
+          --arg title  "Release ${{ github.event.release.tag_name }} published" \
+          --arg body   "Release notes: ${{ github.event.release.html_url }}" \
+          --arg actor  "${{ steps.actor_email.outputs.email }}" \
+          --arg postReleaseStagePR   "$pr_stage" \
+          --arg postReleaseDevelopPR "$ pr_develop" \
+          '{event,title,body,actor,postReleaseStagePR,postReleaseDevelopPR}')
+
+        echo "Slack payload to be sent:"
+        echo "$payload"
+
+        curl -s -X POST -H 'Content-Type: application/json' \
+             --data "$payload" "$SLACK_WEBHOOK_URL"
+

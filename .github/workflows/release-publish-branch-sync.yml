@@ -1,73 +1,40 @@
 name: "Post‑release automation"
+description: "Automates post‑release tasks like generating release notes, creating PRs, and notifying via Slack"
 
 env:
-  STATUS_MERGED:        "Merged"
-  STATUS_AUTO_APPROVED: "Auto‑approved"
-  STATUS_REVIEW:        "Needs Review"
-  STATUS_CONFLICT:      "Has conflicts"
-
   GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
 
 permissions:
   contents: write
-  pull-requests: write
+  pull-requests: write # open / edit PRs
 
 on:
   release:
-    types: [released]
+    types: [released] # Trigger on release creation
 
 jobs:
   post_release:
     runs-on: ubuntu-latest
 
     steps:
-    # -----------------------------------------------------------------------
     - name: Checkout repository
-      id: checkout_repo
       uses: actions/checkout@v4
       with: { fetch-depth: 0 }
 
-    # -----------------------------------------------------------------------
     - name: Generate release notes if missing
-      id: generate_notes
       shell: bash
       run: |
-        rel_id=${{ github.event.release.id }}
-        body=$(gh api repos/${{ github.repository }}/releases/$rel_id --jq .body)
+        rid=${{ github.event.release.id }}
+        body=$(gh api repos/${{ github.repository }}/releases/$rid --jq .body)
         [[ -n $body ]] && exit 0
         gh api --method POST \
-          repos/${{ github.repository }}/releases/$rel_id/generate-notes \
+          repos/${{ github.repository }}/releases/$rid/generate-notes \
           --jq .body > notes.md
         gh release edit "${{ github.event.release.tag_name }}" --notes-file notes.md
 
-    # -----------------------------------------------------------------------
-    - name: Create helper script for PR handling
-      id: create_helper
-      shell: bash
-      run: |
-        cat > auto_handle.sh <<'SH'
-        pr=$1; result_var=$2
-        gh pr merge $pr --merge --auto        # enable GitHub auto‑merge
-        mergeable=$(gh pr view $pr --json mergeable --jq .mergeable)
-
-        if [[ $mergeable == "CONFLICTING" ]]; then
-          echo "$result_var=$STATUS_CONFLICT" >>"$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        if gh pr diff $pr | grep -qE '^diff'; then
-          echo "$result_var=$STATUS_REVIEW"  >>"$GITHUB_OUTPUT"
-        else
-          gh pr review $pr --approve --body "Auto‑approved – no file changes."
-          echo "$result_var=$STATUS_AUTO_APPROVED" >>"$GITHUB_OUTPUT"
-        fi
-        SH
-        chmod +x auto_handle.sh
-
-    # -----------------------------------------------------------------------
-    - name: Open or reuse PR (master → stage)
-      id: pr_master_to_stage
+    - name: Create PR(master→stage)
+      id: pr_master_stage
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
@@ -75,85 +42,49 @@ jobs:
         [[ -z $url ]] && url=$(gh pr create --head master --base stage \
                            --title "Sync master to stage after $tag" \
                            --body  "Automated sync PR after $tag." | tail -n1)
-        echo "URL=$url"       >>"$GITHUB_OUTPUT"
-        echo "NUM=${url##*/}" >>"$GITHUB_OUTPUT"
+        echo "url=$url"       >>"$GITHUB_OUTPUT"
+        echo "number=${url##*/}" >>"$GITHUB_OUTPUT"
 
-    - name: Evaluate PR (master → stage)
-      id: status_master_to_stage
-      run: ./auto_handle.sh "${{ steps.pr_master_to_stage.outputs.NUM }}" STATUS_MASTER_TO_STAGE
-
-    # -----------------------------------------------------------------------
-    - name: Open or reuse PR (stage → develop)
-      id: pr_stage_to_develop
+    - name: Create PR(stage→develop)
+      id: pr_stage_develop
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
+        master_stage_url=${{ steps.pr_master_stage.outputs.url }}
         url=$(gh pr list --state open --head stage --base develop --json url --jq '.[0].url' || true)
         [[ -z $url ]] && url=$(gh pr create --head stage --base develop \
                            --title "Sync stage to develop after $tag" \
-                           --body  "Merge **after** the master → stage PR is merged." | tail -n1)
-        echo "URL=$url"       >>"$GITHUB_OUTPUT"
-        echo "NUM=${url##*/}" >>"$GITHUB_OUTPUT"
+                           --body  "Please merge the master→stage PR first:\n${master_stage_url}" | tail -n1)
+        echo "url=$url"       >>"$GITHUB_OUTPUT"
 
-    - name: Auto‑approve stage → develop if safe
-      id: status_stage_to_develop
-      shell: bash
-      run: |
-        echo "STATUS_STAGE_TO_DEVELOP=$STATUS_REVIEW" >>"$GITHUB_OUTPUT"
-
-        [[ "${{ steps.status_master_to_stage.outputs.STATUS_MASTER_TO_STAGE }}" != "$STATUS_AUTO_APPROVED" ]] && exit 0
-
-        for i in {1..10}; do                               # wait up to 90 s
-          state=$(gh pr view "${{ steps.pr_master_to_stage.outputs.NUM }}" --json state --jq .state)
-          [[ $state == "MERGED" ]] && break
-          sleep 10
-        done
-        [[ $state != "MERGED" ]] && exit 0
-
-        ./auto_handle.sh "${{ steps.pr_stage_to_develop.outputs.NUM }}" STATUS_STAGE_TO_DEVELOP
-
-    # -----------------------------------------------------------------------
-    - name: Determine final PR statuses
-      id: final_statuses
-      shell: bash
-      run: |
-        merged_or () {
-          pr=$1; fallback=$2
-          [[ $(gh pr view $pr --json state --jq .state) == "MERGED" ]] \
-            && echo $STATUS_MERGED || echo $fallback
-        }
-        s1=$(merged_or "${{ steps.pr_master_to_stage.outputs.NUM }}" "${{ steps.status_master_to_stage.outputs.STATUS_MASTER_TO_STAGE }}")
-        s2=$(merged_or "${{ steps.pr_stage_to_develop.outputs.NUM }}"  "${{ steps.status_stage_to_develop.outputs.STATUS_STAGE_TO_DEVELOP }}")
-        echo "MASTER_STAGE_STATUS=$s1" >>"$GITHUB_OUTPUT"
-        echo "STAGE_DEVELOP_STATUS=$s2" >>"$GITHUB_OUTPUT"
-
-    # -----------------------------------------------------------------------
     - name: Resolve actor email
       id: actor_email
       shell: bash
       run: |
-        mail=$(gh api users/${{ github.actor }} --jq .email 2>/dev/null || echo "")
-        [[ -z $mail || $mail == "null" ]] && mail="abito.prakash@nutanix.com"
-        echo "email=$mail" >>"$GITHUB_OUTPUT"
+        email=$(gh api users/${{ github.actor }} --jq .email 2>/dev/null || echo "")
+        echo "email=$email" >>"$GITHUB_OUTPUT"
 
-    # -----------------------------------------------------------------------
     - name: Send Slack notification
-      id: notify_slack
       shell: bash
       run: |
-        pr_stage="${{ steps.pr_master_to_stage.outputs.URL }} – ${{ steps.final_statuses.outputs.MASTER_STAGE_STATUS }}"
-        pr_develop="${{ steps.pr_stage_to_develop.outputs.URL }} – ${{ steps.final_statuses.outputs.STAGE_DEVELOP_STATUS }}"
+        pr1="${{ steps.pr_master_stage.outputs.url }}"
+        pr2="${{ steps.pr_stage_develop.outputs.url }}"
 
         payload=$(jq -n \
-          --arg event  "post_release" \
-          --arg title  "Release ${{ github.event.release.tag_name }} published" \
-          --arg body   "Release notes: ${{ github.event.release.html_url }}" \
-          --arg actor  "${{ steps.actor_email.outputs.email }}" \
-          --arg postReleaseStagePR   "$pr_stage" \
-          --arg postReleaseDevelopPR "$pr_develop" \
-          '{event,title,body,actor,postReleaseStagePR,postReleaseDevelopPR}')
+          --arg event "post_release" \
+          --arg title "Release ${{ github.event.release.tag_name }} published" \
+          --arg body  "Release notes: ${{ github.event.release.html_url }}" \
+          --arg actor "${{ steps.actor_email.outputs.email }}" \
+          --arg postReleaseStagePR   "$pr1" \
+          --arg postReleaseDevelopPR "$pr2" \
+          '{event:$event,
+            title:$title,
+            body:$body,
+            actor:$actor,
+            postReleaseStagePR:$postReleaseStagePR,
+            postReleaseDevelopPR:$postReleaseDevelopPR}')
 
-        echo "Slack payload to be sent:"
+        echo "Slack payload:"
         echo "$payload"
 
         curl -s -X POST -H 'Content-Type: application/json' \

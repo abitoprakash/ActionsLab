@@ -87,5 +87,4 @@ jobs:
         echo "Slack payload:"
         echo "$payload"
 
-        curl -s -X POST -H 'Content-Type: application/json' \
-             --data "$payload" "$SLACK_WEBHOOK_URL"
+        curl -s -X POST -H 'Content-Type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"

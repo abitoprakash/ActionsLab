@@ -1,12 +1,13 @@
-name: Post‑release automation
+name: Post-release automation
+description: Generate release notes, open sync PRs, notify Slack
 
 on:
   release:
-    types: [released]
+    types: [released]          # QA pressed “Publish”
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: write              # edit release notes
+  pull-requests: write         # open / label PRs
 
 env:
   GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
@@ -15,18 +16,25 @@ env:
 jobs:
   post_release:
     runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
       with: { fetch-depth: 0 }
 
-    - name: Generate notes if missing
+    # 1️⃣  Generate notes if body blank
+    - name: Generate notes (if empty)
       shell: bash
       run: |
-        tag=${{ github.event.release.tag_name }}
-        [[ -n $(gh release view "$tag" --json body --jq .body) ]] || \
-          gh release edit "$tag" --generate-notes
+        rid=${{ github.event.release.id }}
+        body=$(gh api repos/${{ github.repository }}/releases/$rid --jq .body)
+        [[ -n $body ]] && exit 0
+        gh api --method POST repos/${{ github.repository }}/releases/$rid/generate-notes \
+          --jq .body >notes.md
+        gh release edit "${{ github.event.release.tag_name }}" --notes-file notes.md
 
-    - name: Helper – create/reuse PR
+    # helper script – create or reuse PR, then label it
+    - name: Prepare helper
       shell: bash
       run: |
         cat >create_or_reuse_pr.sh <<'SH'
@@ -35,51 +43,65 @@ jobs:
         head=$1 base=$2 title=$3 body=$4
         url=$(gh pr list --state open --head "$head" --base "$base" \
                          --json url --jq '.[0].url' || true)
-        [[ -z $url ]] && url=$(gh pr create --head "$head" --base "$base" \
-                                          --title "$title" --body "$body" | tail -n1)
-        gh pr edit "${url##*/}" --add-label "automated-pr"
+        if [[ -z $url ]]; then
+          url=$(gh pr create --head "$head" --base "$base" \
+                             --title "$title" --body "$body" | tail -n1 | tr -d '\r\n')
+        else
+          url=$(echo "$url" | tr -d '\r\n')
+        fi
+        num=${url##*/}
+        gh pr edit "$num" --add-label "automated-pr" || true
         printf '%s' "$url"
         SH
         chmod +x create_or_reuse_pr.sh
 
-    - name: PR master→stage
-      id: master_stage
+    # 2️⃣  master → stage
+    - name: master → stage PR
+      id: pr_master_stage
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
-        url=$(./create_or_reuse_pr.sh master stage \
-              "Sync master to stage after $tag" \
-              "Automated sync PR after $tag." | tr -d '\r\n')
+        url=$(./create_or_reuse_pr.sh \
+                master stage \
+                "Sync master to stage after $tag" \
+                "Automated sync PR after $tag.")
         echo "url=$url" >>"$GITHUB_OUTPUT"
 
-    - name: PR stage→develop
-      id: stage_develop
+    # 3️⃣  stage → develop
+    - name: stage → develop PR
+      id: pr_stage_develop
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
-        upstream=${{ steps.master_stage.outputs.url }}
-        url=$(./create_or_reuse_pr.sh stage develop \
-              "Sync stage to develop after $tag" \
-              "Please merge the master→stage PR first:\n${upstream}" | tr -d '\r\n')
+        m2s=${{ steps.pr_master_stage.outputs.url }}
+        url=$(./create_or_reuse_pr.sh \
+                stage develop \
+                "Sync stage to develop after $tag" \
+                "Please merge the master→stage PR first:\n${m2s}")
         echo "url=$url" >>"$GITHUB_OUTPUT"
 
-    - name: Actor mail
+    # 4️⃣  Resolve actor email
+    - name: Actor email
       id: actor
       shell: bash
       run: |
         mail=$(gh api users/${{ github.actor }} --jq .email 2>/dev/null || true)
         [[ -z $mail || $mail == "null" ]] && mail="${{ github.actor }}"
-        echo "mail=$mail" >>"$GITHUB_OUTPUT"
+        echo "email=$mail" >>"$GITHUB_OUTPUT"
 
+    # 5️⃣  Slack notification
     - name: Notify Slack
       shell: bash
       run: |
-        jq -n \
+        payload=$(jq -n \
           --arg event "post_release" \
           --arg title "Release ${{ github.event.release.tag_name }} published" \
           --arg body  "Release notes: ${{ github.event.release.html_url }}" \
-          --arg actor "${{ steps.actor.outputs.mail }}" \
-          --arg postReleaseStagePR   "${{ steps.master_stage.outputs.url }}" \
-          --arg postReleaseDevelopPR "${{ steps.stage_develop.outputs.url }}" \
-          '{event,title,body,actor,postReleaseStagePR,postReleaseDevelopPR}' |
-        curl -s -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
+          --arg actor "${{ steps.actor.outputs.email }}" \
+          --arg postReleaseStagePR   "${{ steps.pr_master_stage.outputs.url }}" \
+          --arg postReleaseDevelopPR "${{ steps.pr_stage_develop.outputs.url }}" \
+          '{event,title,body,actor,postReleaseStagePR,postReleaseDevelopPR}')
+        echo "Slack payload:"
+        echo "$payload"
+        curl -s -X POST -H 'Content-Type: application/json' \
+             --data "$payload" "$SLACK_WEBHOOK_URL"

@@ -28,69 +28,74 @@ env:
 jobs:
   create_env_pr:
     runs-on: ubuntu-latest
+
     steps:
     - uses: actions/checkout@v4
       with: { fetch-depth: 0 }
 
+    # 1 – set source/target branches
     - name: Derive branches
       id: branches
       shell: bash
       run: |
         case "${{ github.event.inputs.direction }}" in
-          develop-to-stage) echo "src=develop"  >>"$GITHUB_OUTPUT"
-                            echo "dst=stage"    >>"$GITHUB_OUTPUT"
-                            echo "label=Develop → Stage" >>"$GITHUB_OUTPUT" ;;
-          stage-to-master)  echo "src=stage"    >>"$GITHUB_OUTPUT"
-                            echo "dst=master"   >>"$GITHUB_OUTPUT"
-                            echo "label=Stage → Master"  >>"$GITHUB_OUTPUT" ;;
+          develop-to-stage)
+            echo "src=develop"  >>"$GITHUB_OUTPUT"
+            echo "dst=stage"    >>"$GITHUB_OUTPUT"
+            echo "label=Develop → Stage" >>"$GITHUB_OUTPUT" ;;
+          stage-to-master)
+            echo "src=stage"    >>"$GITHUB_OUTPUT"
+            echo "dst=master"   >>"$GITHUB_OUTPUT"
+            echo "label=Stage → Master"  >>"$GITHUB_OUTPUT" ;;
         esac
 
-    - name: Helper – create/reuse PR
-      shell: bash
-      run: |
-        cat >create_or_reuse_pr.sh <<'SH'
-        #!/usr/bin/env bash
-        set -euo pipefail
-        head=$1 base=$2 title=$3 body=$4
-        url=$(gh pr list --state open --head "$head" --base "$base" \
-                         --json url --jq '.[0].url' || true)
-        [[ -z $url ]] && url=$(gh pr create --head "$head" --base "$base" \
-                                          --title "$title" --body "$body" | tail -n1)
-        gh pr edit "${url##*/}" --add-label "automated-pr"
-        printf '%s' "$url"
-        SH
-        chmod +x create_or_reuse_pr.sh
-
+    # 2 – build body
     - name: Compose body
       id: prdesc
       shell: bash
       run: |
-        wf_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        WF_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         if [[ -n "${{ github.event.inputs.pr_body }}" ]]; then
-          text="${{ github.event.inputs.pr_body }}\n\n—\nCreated via workflow run: ${wf_url}"
+          DESC="${{ github.event.inputs.pr_body }}\n\n—\nCreated via workflow run: ${WF_URL}"
         else
-          text="Automatically created PR.\nWorkflow run → ${wf_url}"
+          DESC="Automatically created PR.\nWorkflow run → ${WF_URL}"
         fi
-        printf 'text<<EOF\n%s\nEOF\n' "$text" >>"$GITHUB_OUTPUT"
+        printf 'desc<<EOF\n%s\nEOF\n' "$DESC" >>"$GITHUB_OUTPUT"
 
+    # 3 – create or reuse PR, add “automated‑pr” label
     - name: Create or reuse PR
       id: pr
       shell: bash
       run: |
-        url=$(./create_or_reuse_pr.sh \
-                "${{ steps.branches.outputs.src }}" \
-                "${{ steps.branches.outputs.dst }}" \
-                "${{ github.event.inputs.pr_title }}" \
-                "${{ steps.prdesc.outputs.text }}" | tr -d '\r\n')
-        echo "url=$url" >>"$GITHUB_OUTPUT"
-        echo "num=${url##*/}" >>"$GITHUB_OUTPUT"
+        src=${{ steps.branches.outputs.src }}
+        dst=${{ steps.branches.outputs.dst }}
+        TITLE="${{ github.event.inputs.pr_title }}"
+        BODY="${{ steps.prdesc.outputs.desc }}"
 
-        commits=$(gh api repos/${{ github.repository }}/pulls/${url##*/}/commits)
-        reviewers=$(jq -r '.[] | .author.login' <<<"$commits" |
-                    grep -v -E '(^github-actions\[bot\]$|^$)' | sort -u | paste -sd, -)
-        [[ -n $reviewers ]] && gh pr edit ${url##*/} --add-reviewer "$reviewers" || true
+        url=$(gh pr list --state open --head "$src" --base "$dst" \
+                         --json url --jq '.[0].url' || true)
 
-    - name: Actor mail
+        if [[ -z $url ]]; then
+          url=$(gh pr create --head "$src" --base "$dst" \
+                              --title "$TITLE" --body "$BODY" | tail -n1 | tr -d '\r\n')
+        else
+          url=$(echo "$url" | tr -d '\r\n')
+        fi
+
+        num=${url##*/}
+        gh pr edit "$num" --add-label "automated-pr" || true
+
+        echo "url=$url"   >>"$GITHUB_OUTPUT"
+        echo "number=$num" >>"$GITHUB_OUTPUT"
+
+        # Add reviewers (non‑bot commit authors)
+        commits=$(gh api repos/${{ github.repository }}/pulls/$num/commits)
+        revs=$(jq -r '.[] | .author.login' <<<"$commits" |
+               grep -v -E '(^github-actions\[bot\]$|^$)' | sort -u | paste -sd, -)
+        [[ -n $revs ]] && gh pr edit "$num" --add-reviewer "$revs" || true
+
+    # 4 – actor email
+    - name: Resolve actor
       id: actor
       shell: bash
       run: |
@@ -98,6 +103,7 @@ jobs:
         [[ -z $mail || $mail == "null" ]] && mail="${{ github.actor }}"
         echo "mail=$mail" >>"$GITHUB_OUTPUT"
 
+    # 5 – Slack ping
     - name: Notify Slack
       shell: bash
       run: |

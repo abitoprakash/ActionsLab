@@ -8,7 +8,7 @@ const ExampleComponent = () => {
     <div
       role="button"
       onClick={() =>
-        console.log('Clickessd without prosperssssss role ors key event shandlers')
+        console.log('Clicked without prosperssssss role ors key event shandlers')
       }
     >
       Click me!

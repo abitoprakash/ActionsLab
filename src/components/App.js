@@ -9,6 +9,7 @@ const ExampleComponent = () => {
   // jsx-a11y rule: no-static-element-interactions
   return (
     <div
+      role="button"
       onClick={() =>
         console.log('Clicked without propersssss role or key event handlers')
       }

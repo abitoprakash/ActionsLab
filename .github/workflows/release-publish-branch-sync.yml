@@ -1,4 +1,4 @@
-name: Post-release automation
+name: Post‑release automation
 
 on:
   release:
@@ -15,7 +15,6 @@ env:
 jobs:
   post_release:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
       with: { fetch-depth: 0 }
@@ -24,10 +23,10 @@ jobs:
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
-        body=$(gh release view "$tag" --json body --jq .body)
-        [[ -n $body ]] || gh release edit "$tag" --generate-notes
+        [[ -n $(gh release view "$tag" --json body --jq .body) ]] || \
+          gh release edit "$tag" --generate-notes
 
-    - name: Helper - create-or-reuse PR
+    - name: Helper – create/reuse PR
       shell: bash
       run: |
         cat >create_or_reuse_pr.sh <<'SH'
@@ -39,7 +38,7 @@ jobs:
         [[ -z $url ]] && url=$(gh pr create --head "$head" --base "$base" \
                                           --title "$title" --body "$body" | tail -n1)
         gh pr edit "${url##*/}" --add-label "automated-pr"
-        printf '%s' "$url"           # *** no trailing newline ***
+        printf '%s' "$url"
         SH
         chmod +x create_or_reuse_pr.sh
 
@@ -50,7 +49,7 @@ jobs:
         tag=${{ github.event.release.tag_name }}
         url=$(./create_or_reuse_pr.sh master stage \
               "Sync master to stage after $tag" \
-              "Automated sync PR after $tag.")
+              "Automated sync PR after $tag." | tr -d '\r\n')
         echo "url=$url" >>"$GITHUB_OUTPUT"
 
     - name: PR stage→develop
@@ -61,10 +60,10 @@ jobs:
         upstream=${{ steps.master_stage.outputs.url }}
         url=$(./create_or_reuse_pr.sh stage develop \
               "Sync stage to develop after $tag" \
-              "Please merge the master→stage PR first:\n${upstream}")
+              "Please merge the master→stage PR first:\n${upstream}" | tr -d '\r\n')
         echo "url=$url" >>"$GITHUB_OUTPUT"
 
-    - name: Resolve actor mail
+    - name: Actor mail
       id: actor
       shell: bash
       run: |

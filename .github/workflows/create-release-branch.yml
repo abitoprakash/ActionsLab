@@ -45,7 +45,7 @@ jobs:
                             echo "label=Stage → Master"  >>"$GITHUB_OUTPUT" ;;
         esac
 
-    - name: Helper - create-or-reuse PR
+    - name: Helper – create/reuse PR
       shell: bash
       run: |
         cat >create_or_reuse_pr.sh <<'SH'
@@ -57,7 +57,7 @@ jobs:
         [[ -z $url ]] && url=$(gh pr create --head "$head" --base "$base" \
                                           --title "$title" --body "$body" | tail -n1)
         gh pr edit "${url##*/}" --add-label "automated-pr"
-        printf '%s' "$url"           # *** no trailing newline ***
+        printf '%s' "$url"
         SH
         chmod +x create_or_reuse_pr.sh
 
@@ -81,7 +81,7 @@ jobs:
                 "${{ steps.branches.outputs.src }}" \
                 "${{ steps.branches.outputs.dst }}" \
                 "${{ github.event.inputs.pr_title }}" \
-                "${{ steps.prdesc.outputs.text }}")
+                "${{ steps.prdesc.outputs.text }}" | tr -d '\r\n')
         echo "url=$url" >>"$GITHUB_OUTPUT"
         echo "num=${url##*/}" >>"$GITHUB_OUTPUT"
 

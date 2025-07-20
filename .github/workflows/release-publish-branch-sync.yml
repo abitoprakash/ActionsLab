@@ -26,12 +26,21 @@ jobs:
     - name: Generate notes (if empty)
       shell: bash
       run: |
-        rid=${{ github.event.release.id }}
-        body=$(gh api repos/${{ github.repository }}/releases/$rid --jq .body)
-        [[ -n $body ]] && exit 0
-        gh api --method POST repos/${{ github.repository }}/releases/$rid/generate-notes \
-          --jq .body >notes.md
-        gh release edit "${{ github.event.release.tag_name }}" --notes-file notes.md
+        tag=${{ github.event.release.tag_name }}
+        # Fetch existing body (null or empty means “no notes”)
+        body=$(gh api repos/${{ github.repository }}/releases/tags/$tag --jq .body)
+
+        # Exit if there’s already content
+        if [[ -n "$body" && "$body" != "null" ]]; then
+          echo "Release notes already present; skipping generation."
+          exit 0
+        fi
+
+        gh api --method POST repos/${{ github.repository }}/releases/generate-notes \
+          -f tag_name="$tag" --jq .body > notes.md
+
+        gh release edit "$tag" --notes-file notes.md
+
 
     # helper script – create or reuse PR, then label it
     - name: Prepare helper

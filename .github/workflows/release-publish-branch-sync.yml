@@ -1,116 +1,90 @@
-name: Post-release automation
-description: Generate release notes, open sync PRs, notify Slack
-
-on:
-  release:
-    types: [released]          # QA pressed “Publish”
-
-permissions:
-  contents: write              # edit release notes
-  pull-requests: write         # open / label PRs
+name: "Post-release automation"
+description: "Automates post-release tasks like generating release notes, creating PRs, and notifying via Slack"
 
 env:
   GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
+
+permissions:
+  contents: write
+  pull-requests: write # open / edit PRs
+
+on:
+  release:
+    types: [released] # Trigger on release creation
 
 jobs:
   post_release:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout
+    - name: Checkout repository
       uses: actions/checkout@v4
       with: { fetch-depth: 0 }
 
-    # 1️⃣  Generate notes if body blank
-    - name: Generate notes (if empty)
+    - name: Generate release notes if missing
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
-        # Fetch existing body (null or empty means “no notes”)
         body=$(gh api repos/${{ github.repository }}/releases/tags/$tag --jq .body)
-
-        # Exit if there’s already content
-        if [[ -n "$body" && "$body" != "null" ]]; then
-          echo "Release notes already present; skipping generation."
-          exit 0
-        fi
-
-        gh api --method POST repos/${{ github.repository }}/releases/generate-notes \
+        [[ -n "$body" && "$body" != "null" ]] && exit 0
+        gh api --method POST \
+          repos/${{ github.repository }}/releases/generate-notes \
           -f tag_name="$tag" --jq .body > notes.md
-
         gh release edit "$tag" --notes-file notes.md
 
-
-    # helper script – create or reuse PR, then label it
-    - name: Prepare helper
-      shell: bash
-      run: |
-        cat >create_or_reuse_pr.sh <<'SH'
-        #!/usr/bin/env bash
-        set -euo pipefail
-        head=$1 base=$2 title=$3 body=$4
-        url=$(gh pr list --state open --head "$head" --base "$base" \
-                         --json url --jq '.[0].url' || true)
-        if [[ -z $url ]]; then
-          url=$(gh pr create --head "$head" --base "$base" \
-                             --title "$title" --body "$body" | tail -n1 | tr -d '\r\n')
-        else
-          url=$(echo "$url" | tr -d '\r\n')
-        fi
-        num=${url##*/}
-        gh pr edit "$num" --add-label "automated-pr" || true
-        printf '%s' "$url"
-        SH
-        chmod +x create_or_reuse_pr.sh
-
-    # 2️⃣  master → stage
-    - name: master → stage PR
+    - name: Create PR(master→stage)
       id: pr_master_stage
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
-        url=$(./create_or_reuse_pr.sh \
-                master stage \
-                "Sync master to stage after $tag" \
-                "Automated sync PR after $tag.")
-        echo "url=$url" >>"$GITHUB_OUTPUT"
+        url=$(gh pr list --state open --head master --base stage --json url --jq '.[0].url' || true)
+        [[ -z $url ]] && url=$(gh pr create --head master --base stage \
+                           --title "Sync master to stage after $tag" \
+                           --body  "Automated sync PR after $tag." | tail -n1)
+        gh pr edit "$url" --add-label automated-pr
+        echo "url=$url"         >>"$GITHUB_OUTPUT"
+        echo "number=${url##*/}" >>"$GITHUB_OUTPUT"
 
-    # 3️⃣  stage → develop
-    - name: stage → develop PR
+    - name: Create PR(stage→develop)
       id: pr_stage_develop
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
-        m2s=${{ steps.pr_master_stage.outputs.url }}
-        url=$(./create_or_reuse_pr.sh \
-                stage develop \
-                "Sync stage to develop after $tag" \
-                "Please merge the master→stage PR first:\n${m2s}")
+        master_stage_url=${{ steps.pr_master_stage.outputs.url }}
+        url=$(gh pr list --state open --head stage --base develop --json url --jq '.[0].url' || true)
+        [[ -z $url ]] && url=$(gh pr create --head stage --base develop \
+                           --title "Sync stage to develop after $tag" \
+                           --body  "Please merge the master→stage PR first:\n${master_stage_url}" | tail -n1)
+        gh pr edit "$url" --add-label automated-pr
         echo "url=$url" >>"$GITHUB_OUTPUT"
 
-    # 4️⃣  Resolve actor email
-    - name: Actor email
-      id: actor
+    - name: Resolve actor email
+      id: actor_email
       shell: bash
       run: |
-        mail=$(gh api users/${{ github.actor }} --jq .email 2>/dev/null || true)
-        [[ -z $mail || $mail == "null" ]] && mail="${{ github.actor }}"
-        echo "email=$mail" >>"$GITHUB_OUTPUT"
+        email=$(gh api users/${{ github.actor }} --jq .email 2>/dev/null || echo "")
+        echo "email=$email" >>"$GITHUB_OUTPUT"
 
-    # 5️⃣  Slack notification
-    - name: Notify Slack
+    - name: Send Slack notification
       shell: bash
       run: |
+        pr1="${{ steps.pr_master_stage.outputs.url }}"
+        pr2="${{ steps.pr_stage_develop.outputs.url }}"
+
         payload=$(jq -n \
           --arg event "post_release" \
           --arg title "Release ${{ github.event.release.tag_name }} published" \
           --arg body  "Release notes: ${{ github.event.release.html_url }}" \
-          --arg actor "${{ steps.actor.outputs.email }}" \
-          --arg postReleaseStagePR   "${{ steps.pr_master_stage.outputs.url }}" \
-          --arg postReleaseDevelopPR "${{ steps.pr_stage_develop.outputs.url }}" \
-          '{event,title,body,actor,postReleaseStagePR,postReleaseDevelopPR}')
-        echo "Slack payload:"
-        echo "$payload"
+          --arg actor "${{ steps.actor_email.outputs.email }}" \
+          --arg postReleaseStagePR   "$pr1" \
+          --arg postReleaseDevelopPR "$pr2" \
+          '{event:$event,
+            title:$title,
+            body:$body,
+            actor:$actor,
+            postReleaseStagePR:$postReleaseStagePR,
+            postReleaseDevelopPR:$postReleaseDevelopPR}')
+
         curl -s -X POST -H 'Content-Type: application/json' \
              --data "$payload" "$SLACK_WEBHOOK_URL"

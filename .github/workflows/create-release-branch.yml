@@ -52,7 +52,6 @@ jobs:
             echo "Unsupported direction"; exit 1
         esac
 
-    # 2️⃣  Craft PR description
     - name: Compose description
       id: prdesc
       run: |
@@ -99,6 +98,11 @@ jobs:
         PR_NUM="${PR_URL##*/}"
         echo "url=$PR_URL"      >>"$GITHUB_OUTPUT"
         echo "number=$PR_NUM"   >>"$GITHUB_OUTPUT"
+
+    - name: Add automated label
+      shell: bash
+      run: |
+        gh pr edit ${{ steps.pr.outputs.number }} --add-label automated-pr
 
     # 4️⃣  Add valid commit authors as reviewers (skip bots)
     - name: Add reviewers

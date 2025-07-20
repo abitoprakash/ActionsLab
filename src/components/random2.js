@@ -11,7 +11,7 @@ const ExampleComponent = () => {
         console.log('Clicked without proper role ors key event shandlers')
       }
     >
-      Click me!
+      Click me
     </div>
   );
 };

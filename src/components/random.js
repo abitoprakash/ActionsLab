@@ -1,6 +1,6 @@
 // test-eslint-plugins.js
 
-// Example component to test jsx-a11y and unicorn rules
+// Example component to test jsx-a11y
 const ExampleComponent = () => {
   // unicorn rule: prefer-query-selector
   const badPractice = document.getElementById('myElement');
@@ -9,6 +9,7 @@ const ExampleComponent = () => {
   return (
     <div
       role="button"
+      aria-label="Click me"
       onClick={() =>
         console.log('Clicked without propersssss role or key event handlers')
       }

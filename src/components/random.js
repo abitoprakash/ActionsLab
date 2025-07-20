@@ -1,5 +1,4 @@
 // test-eslint-plugins.js
-import React from 'react';
 
 // Example component to test jsx-a11y and unicorn rules
 const ExampleComponent = () => {

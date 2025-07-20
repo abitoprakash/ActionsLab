@@ -36,6 +36,6 @@ changelog:
       labels: ["chore", "refactor"]
 
     - title: "Miscellaneous"
-      labels: ["*"]                 # anything else
+      labels: ["*"]
       exclude:
-        labels: ["skip‑changelog"]
+        labels: ["automated-pr"]

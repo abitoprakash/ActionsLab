@@ -1,0 +1,110 @@
+name: "Create release PR"
+
+on:
+  workflow_dispatch:
+    inputs:
+      direction:
+        description: "Direction"
+        required: true
+        type: choice
+        options: [develop-to-stage, stage-to-master]
+      pr_title:
+        description: "PR title"
+        required: true
+        type: string
+      pr_body:
+        description: "Optional description"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
+
+jobs:
+  create_env_pr:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with: { fetch-depth: 0 }
+
+    - name: Derive branches
+      id: branches
+      shell: bash
+      run: |
+        case "${{ github.event.inputs.direction }}" in
+          develop-to-stage) echo "src=develop"  >>"$GITHUB_OUTPUT"
+                            echo "dst=stage"    >>"$GITHUB_OUTPUT"
+                            echo "label=Develop → Stage" >>"$GITHUB_OUTPUT" ;;
+          stage-to-master)  echo "src=stage"    >>"$GITHUB_OUTPUT"
+                            echo "dst=master"   >>"$GITHUB_OUTPUT"
+                            echo "label=Stage → Master"  >>"$GITHUB_OUTPUT" ;;
+        esac
+
+    - name: Helper – create or reuse PR
+      shell: bash
+      run: |
+        cat >create_or_reuse_pr.sh <<'SH'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        head=$1 base=$2 title=$3 body=$4
+        url=$(gh pr list --state open --head "$head" --base "$base" \
+                         --json url --jq '.[0].url' || true)
+        [[ -z $url ]] && url=$(gh pr create --head "$head" --base "$base" \
+                                        --title "$title" --body "$body" | tail -n1)
+        gh pr edit "${url##*/}" --add-label "automated-pr"
+        echo "$url"
+        SH
+        chmod +x create_or_reuse_pr.sh
+
+    - name: Compose body
+      id: prdesc
+      shell: bash
+      run: |
+        wf_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        if [[ -n "${{ github.event.inputs.pr_body }}" ]]; then
+          text="${{ github.event.inputs.pr_body }}\n\n—\nCreated via workflow run: ${wf_url}"
+        else
+          text="Automatically created PR.\nWorkflow run → ${wf_url}"
+        fi
+        printf 'text<<EOF\n%s\nEOF\n' "$text" >>"$GITHUB_OUTPUT"
+
+    - name: Create or reuse PR
+      id: pr
+      shell: bash
+      run: |
+        url=$(./create_or_reuse_pr.sh \
+                "${{ steps.branches.outputs.src }}" \
+                "${{ steps.branches.outputs.dst }}" \
+                "${{ github.event.inputs.pr_title }}" \
+                "${{ steps.prdesc.outputs.text }}")
+        echo "url=$url" >>"$GITHUB_OUTPUT"
+        echo "num=${url##*/}" >>"$GITHUB_OUTPUT"
+
+        commits=$(gh api repos/${{ github.repository }}/pulls/${url##*/}/commits)
+        reviewers=$(jq -r '.[] | .author.login' <<<"$commits" |
+                    grep -v -E '(^github-actions\[bot\]$|^$)' | sort -u | paste -sd, -)
+        [[ -n $reviewers ]] && gh pr edit ${url##*/} --add-reviewer "$reviewers" || true
+
+    - name: Resolve actor e‑mail
+      id: actor
+      shell: bash
+      run: |
+        mail=$(gh api users/${{ github.actor }} --jq '.email' 2>/dev/null || true)
+        [[ -z $mail || $mail == "null" ]] && mail="${{ github.actor }}"
+        echo "mail=$mail" >>"$GITHUB_OUTPUT"
+
+    - name: Notify Slack
+      shell: bash
+      run: |
+        jq -n \
+          --arg event "create_env_pr" \
+          --arg title "${{ steps.branches.outputs.label }} PR created" \
+          --arg body  "PR link: ${{ steps.pr.outputs.url }}" \
+          --arg actor "${{ steps.actor.outputs.mail }}" \
+          '{event,title,body,actor}' |
+        curl -s -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"

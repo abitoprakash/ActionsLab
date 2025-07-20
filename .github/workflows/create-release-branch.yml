@@ -1,19 +1,19 @@
-name: "Create release PR"
+name: Create environment PR
 
 on:
   workflow_dispatch:
     inputs:
       direction:
-        description: "Direction"
+        description: Promotion direction
         required: true
         type: choice
         options: [develop-to-stage, stage-to-master]
       pr_title:
-        description: "PR title"
+        description: PR title
         required: true
         type: string
       pr_body:
-        description: "Optional description"
+        description: Optional description
         required: false
         type: string
 
@@ -45,7 +45,7 @@ jobs:
                             echo "label=Stage → Master"  >>"$GITHUB_OUTPUT" ;;
         esac
 
-    - name: Helper – create or reuse PR
+    - name: Helper - create-or-reuse PR
       shell: bash
       run: |
         cat >create_or_reuse_pr.sh <<'SH'
@@ -55,9 +55,9 @@ jobs:
         url=$(gh pr list --state open --head "$head" --base "$base" \
                          --json url --jq '.[0].url' || true)
         [[ -z $url ]] && url=$(gh pr create --head "$head" --base "$base" \
-                                        --title "$title" --body "$body" | tail -n1)
+                                          --title "$title" --body "$body" | tail -n1)
         gh pr edit "${url##*/}" --add-label "automated-pr"
-        echo "$url"
+        printf '%s' "$url"           # *** no trailing newline ***
         SH
         chmod +x create_or_reuse_pr.sh
 
@@ -90,11 +90,11 @@ jobs:
                     grep -v -E '(^github-actions\[bot\]$|^$)' | sort -u | paste -sd, -)
         [[ -n $reviewers ]] && gh pr edit ${url##*/} --add-reviewer "$reviewers" || true
 
-    - name: Resolve actor e‑mail
+    - name: Actor mail
       id: actor
       shell: bash
       run: |
-        mail=$(gh api users/${{ github.actor }} --jq '.email' 2>/dev/null || true)
+        mail=$(gh api users/${{ github.actor }} --jq .email 2>/dev/null || true)
         [[ -z $mail || $mail == "null" ]] && mail="${{ github.actor }}"
         echo "mail=$mail" >>"$GITHUB_OUTPUT"
 

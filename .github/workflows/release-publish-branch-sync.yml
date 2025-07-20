@@ -1,4 +1,4 @@
-name: "Post-release automation"
+name: Post-release automation
 
 on:
   release:
@@ -15,6 +15,7 @@ env:
 jobs:
   post_release:
     runs-on: ubuntu-latest
+
     steps:
     - uses: actions/checkout@v4
       with: { fetch-depth: 0 }
@@ -26,7 +27,7 @@ jobs:
         body=$(gh release view "$tag" --json body --jq .body)
         [[ -n $body ]] || gh release edit "$tag" --generate-notes
 
-    - name: Helper – create or reuse PR
+    - name: Helper - create-or-reuse PR
       shell: bash
       run: |
         cat >create_or_reuse_pr.sh <<'SH'
@@ -36,14 +37,14 @@ jobs:
         url=$(gh pr list --state open --head "$head" --base "$base" \
                          --json url --jq '.[0].url' || true)
         [[ -z $url ]] && url=$(gh pr create --head "$head" --base "$base" \
-                                        --title "$title" --body "$body" | tail -n1)
+                                          --title "$title" --body "$body" | tail -n1)
         gh pr edit "${url##*/}" --add-label "automated-pr"
-        echo "$url"
+        printf '%s' "$url"           # *** no trailing newline ***
         SH
         chmod +x create_or_reuse_pr.sh
 
     - name: PR master→stage
-      id: pr_master_stage
+      id: master_stage
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
@@ -53,21 +54,21 @@ jobs:
         echo "url=$url" >>"$GITHUB_OUTPUT"
 
     - name: PR stage→develop
-      id: pr_stage_develop
+      id: stage_develop
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
-        upstream=${{ steps.pr_master_stage.outputs.url }}
+        upstream=${{ steps.master_stage.outputs.url }}
         url=$(./create_or_reuse_pr.sh stage develop \
               "Sync stage to develop after $tag" \
               "Please merge the master→stage PR first:\n${upstream}")
         echo "url=$url" >>"$GITHUB_OUTPUT"
 
-    - name: Resolve actor email
-      id: actor_email
+    - name: Resolve actor mail
+      id: actor
       shell: bash
       run: |
-        mail=$(gh api users/${{ github.actor }} --jq '.email' 2>/dev/null || true)
+        mail=$(gh api users/${{ github.actor }} --jq .email 2>/dev/null || true)
         [[ -z $mail || $mail == "null" ]] && mail="${{ github.actor }}"
         echo "mail=$mail" >>"$GITHUB_OUTPUT"
 
@@ -78,8 +79,8 @@ jobs:
           --arg event "post_release" \
           --arg title "Release ${{ github.event.release.tag_name }} published" \
           --arg body  "Release notes: ${{ github.event.release.html_url }}" \
-          --arg actor "${{ steps.actor_email.outputs.mail }}" \
-          --arg postReleaseStagePR   "${{ steps.pr_master_stage.outputs.url }}" \
-          --arg postReleaseDevelopPR "${{ steps.pr_stage_develop.outputs.url }}" \
+          --arg actor "${{ steps.actor.outputs.mail }}" \
+          --arg postReleaseStagePR   "${{ steps.master_stage.outputs.url }}" \
+          --arg postReleaseDevelopPR "${{ steps.stage_develop.outputs.url }}" \
           '{event,title,body,actor,postReleaseStagePR,postReleaseDevelopPR}' |
         curl -s -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"

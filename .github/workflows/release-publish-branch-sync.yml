@@ -1,5 +1,5 @@
 name: "Post-release automation"
-description: "Automates post-release tasks like generating release notes, creating PRs, and notifying via Slack"
+description: "Automates post-release tasks → generate notes, open sync PRs, notify Slack"
 
 env:
   GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
@@ -7,11 +7,11 @@ env:
 
 permissions:
   contents: write
-  pull-requests: write # open / edit PRs
+  pull-requests: write
 
 on:
   release:
-    types: [released] # Trigger on release creation
+    types: [released]
 
 jobs:
   post_release:
@@ -33,30 +33,65 @@ jobs:
           -f tag_name="$tag" --jq .body > notes.md
         gh release edit "$tag" --notes-file notes.md
 
-    - name: Create PR(master→stage)
+    - name: Create PR (master → stage)
       id: pr_master_stage
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
         url=$(gh pr list --state open --head master --base stage --json url --jq '.[0].url' || true)
-        [[ -z $url ]] && url=$(gh pr create --head master --base stage \
-                           --title "Sync master to stage after $tag" \
-                           --body  "Automated sync PR after $tag." | tail -n1)
-        gh pr edit "$url" --add-label automated-pr
-        echo "url=$url"         >>"$GITHUB_OUTPUT"
-        echo "number=${url##*/}" >>"$GITHUB_OUTPUT"
 
-    - name: Create PR(stage→develop)
+        if [[ -z $url ]]; then
+          set +e
+          output=$(gh pr create --head master --base stage \
+                     --title "Sync master to stage after $tag" \
+                     --body  "Automated sync PR after $tag." 2>&1)
+          status=$?
+          set -e
+          if [[ $status -eq 0 ]]; then
+            url=$(echo "$output" | tail -n1)
+          else
+            echo "::notice::No commits between master and stage - skipping PR"
+            url="N/A"
+          fi
+        fi
+
+        if [[ $url == https:* ]]; then
+          gh pr edit "$url" --add-label automated-pr || true
+          num=${url##*/}
+        else
+          num="N/A"
+        fi
+
+        echo "url=$url"   >>"$GITHUB_OUTPUT"
+        echo "number=$num" >>"$GITHUB_OUTPUT"
+
+    - name: Create PR (stage → develop)
       id: pr_stage_develop
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
         master_stage_url=${{ steps.pr_master_stage.outputs.url }}
         url=$(gh pr list --state open --head stage --base develop --json url --jq '.[0].url' || true)
-        [[ -z $url ]] && url=$(gh pr create --head stage --base develop \
-                           --title "Sync stage to develop after $tag" \
-                           --body  "Please merge the master→stage PR first:\n${master_stage_url}" | tail -n1)
-        gh pr edit "$url" --add-label automated-pr
+
+        if [[ -z $url ]]; then
+          set +e
+          output=$(gh pr create --head stage --base develop \
+                     --title "Sync stage to develop after $tag" \
+                     --body  "Please merge the master → stage PR first:\n${master_stage_url}" 2>&1)
+          status=$?
+          set -e
+          if [[ $status -eq 0 ]]; then
+            url=$(echo "$output" | tail -n1)
+          else
+            echo "::notice::No commits between stage and develop - skipping PR"
+            url="N/A"
+          fi
+        fi
+
+        if [[ $url == https:* ]]; then
+          gh pr edit "$url" --add-label automated-pr || true
+        fi
+
         echo "url=$url" >>"$GITHUB_OUTPUT"
 
     - name: Resolve actor email

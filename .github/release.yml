@@ -1,18 +1,7 @@
 changelog:
-  template: |
-    ## Release {{tag_name}} – {{date}}
-
-    {{CHANGELOG}}
-
-    ---
-
-    **Full diff**: {{compare_url}}
-    **Contributors**: {{contributor_list}}
-
   categories:
     - title: "Features"
       labels: ["feature", "enhancement"]
-      changes-template: "* {{pull_request.title}} (#{pull_request.number})"
 
     - title: "Bug fixes"
       labels: ["bug", "fix"]

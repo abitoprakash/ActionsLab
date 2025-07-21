@@ -1,5 +1,5 @@
 name: "Post-release automation"
-description: "Automates post-release tasks like generating release notes, creating PRs, and notifying via Slack"
+description: "Automates post-release tasks -> generating release notes, creating PRs, and notifying via Slack"
 
 env:
   GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
@@ -7,11 +7,11 @@ env:
 
 permissions:
   contents: write
-  pull-requests: write # open / edit PRs
+  pull-requests: write
 
 on:
   release:
-    types: [released] # Trigger on release creation
+    types: [released]
 
 jobs:
   post_release:
@@ -33,7 +33,7 @@ jobs:
           -f tag_name="$tag" --jq .body > notes.md
         gh release edit "$tag" --notes-file notes.md
 
-    - name: Create PR(master→stage)
+    - name: Create PR (master → stage)
       id: pr_master_stage
       shell: bash
       run: |
@@ -46,7 +46,7 @@ jobs:
         echo "url=$url"         >>"$GITHUB_OUTPUT"
         echo "number=${url##*/}" >>"$GITHUB_OUTPUT"
 
-    - name: Create PR(stage→develop)
+    - name: Create PR (stage → develop)
       id: pr_stage_develop
       shell: bash
       run: |
@@ -55,7 +55,7 @@ jobs:
         url=$(gh pr list --state open --head stage --base develop --json url --jq '.[0].url' || true)
         [[ -z $url ]] && url=$(gh pr create --head stage --base develop \
                            --title "Sync stage to develop after $tag" \
-                           --body  "Please merge the master→stage PR first:\n${master_stage_url}" | tail -n1)
+                           --body  "Please merge the master → stage PR first:\n${master_stage_url}" | tail -n1)
         gh pr edit "$url" --add-label automated-pr
         echo "url=$url" >>"$GITHUB_OUTPUT"
 

@@ -1,11 +1,10 @@
 name: "Create release PR"
-description: "Create a pull request to merge changes from develop to stage or from stage to master"
 
 on:
   workflow_dispatch:
     inputs:
       direction:
-        description: "Select the PR type"
+        description: "PR Type"
         required: true
         type: choice
         options: [develop-to-stage, stage-to-master]
@@ -27,7 +26,7 @@ env:
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
 
 jobs:
-  create_env_pr:
+  create_release_pr:
     runs-on: ubuntu-latest
 
     steps:
@@ -74,6 +73,8 @@ jobs:
 
     - name: Create release PR
       id: pr
+      env:
+        GH_TOKEN: ${{ secrets.PR_CREATOR_TOKEN }}
       run: |
         head="${{ steps.branches.outputs.src }}"
         base="${{ steps.branches.outputs.dst }}"
@@ -117,10 +118,6 @@ jobs:
           --arg body  "PR link: ${{ steps.pr.outputs.url }}" \
           --arg actor "${{ steps.actor.outputs.email }}" \
           '{event:$event, title:$title, body:$body, actor:$actor}')
-
-        echo "::group::Slack payload"
-        echo "$payload" | jq   # pretty‑print for logs
-        echo "::endgroup::"
 
         curl -s -X POST -H 'Content-Type: application/json' \
              --data "$payload" "$SLACK_WEBHOOK_URL"

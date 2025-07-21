@@ -65,7 +65,7 @@ jobs:
         ### Summary
         ${SUMMARY}
 
-        This PR was created via [workflow'run](${WF_URL}) - executed by @${{ github.actor }}
+        This PR was created via [workflow](${WF_URL}) - executed by @${{ github.actor }}
 
         ### Dev URL
         ${{ steps.branches.outputs.devurl }}
@@ -110,11 +110,13 @@ jobs:
 
     - name: Notify Slack
       run: |
-        jq -n \
+        payload=$(jq -n \
           --arg event "create_release_pr" \
           --arg title "${{ steps.branches.outputs.label }} PR #${{ steps.pr.outputs.number }} created" \
           --arg body  "PR link: ${{ steps.pr.outputs.url }}" \
           --arg actor "${{ steps.actor.outputs.email }}" \
-          '{event,title,body,actor}' |
+          '{event,title,body,actor}')
+        echo "Slack payload:"
+        echo "$payload"
         curl -s -X POST -H 'Content-Type: application/json' \
-             --data @- "$SLACK_WEBHOOK_URL"
+          --data "$payload" "$SLACK_WEBHOOK_URL"

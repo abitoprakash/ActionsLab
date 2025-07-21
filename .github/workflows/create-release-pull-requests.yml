@@ -116,10 +116,10 @@ jobs:
           --arg title "${{ steps.branches.outputs.label }} PR #${{ steps.pr.outputs.number }} created" \
           --arg body  "PR link: ${{ steps.pr.outputs.url }}" \
           --arg actor "${{ steps.actor.outputs.email }}" \
-          '{event,title,body,actor}')
+          '{event:$event, title:$title, body:$body, actor:$actor}')
 
         echo "::group::Slack payload"
-        echo "$payload" | jq   # nicely formatted for the logs
+        echo "$payload" | jq   # pretty‑print for logs
         echo "::endgroup::"
 
         curl -s -X POST -H 'Content-Type: application/json' \

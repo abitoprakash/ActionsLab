@@ -109,6 +109,7 @@ jobs:
         echo "email=$email" >>"$GITHUB_OUTPUT"
 
     - name: Notify Slack
+      shell: bash
       run: |
         payload=$(jq -n \
           --arg event "create_release_pr" \
@@ -116,7 +117,10 @@ jobs:
           --arg body  "PR link: ${{ steps.pr.outputs.url }}" \
           --arg actor "${{ steps.actor.outputs.email }}" \
           '{event,title,body,actor}')
-        echo "Slack payload:"
-        echo "$payload"
+
+        echo "::group::Slack payload"
+        echo "$payload" | jq   # nicely formatted for the logs
+        echo "::endgroup::"
+
         curl -s -X POST -H 'Content-Type: application/json' \
-          --data "$payload" "$SLACK_WEBHOOK_URL"
+             --data "$payload" "$SLACK_WEBHOOK_URL"

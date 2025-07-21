@@ -1,0 +1,120 @@
+name: "Create release PR"
+description: "Create a pull request to merge changes from develop to stage or from stage to master"
+
+on:
+  workflow_dispatch:
+    inputs:
+      direction:
+        description: "Select the PR type"
+        required: true
+        type: choice
+        options: [develop-to-stage, stage-to-master]
+      pr_title:
+        description: "Pull request title"
+        required: true
+        type: string
+      pr_body:
+        description: "Optional PR description"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASE_WORKFLOW_URL }}
+
+jobs:
+  create_env_pr:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with: { fetch-depth: 0 }
+
+    - name: Select branches
+      id: branches
+      run: |
+        case "${{ github.event.inputs.direction }}" in
+          develop-to-stage)
+            echo "src=develop"  >>"$GITHUB_OUTPUT"
+            echo "dst=stage"    >>"$GITHUB_OUTPUT"
+            echo "label=Develop → Stage" >>"$GITHUB_OUTPUT"
+            echo "devurl=https://dev-portal.nutanix.com/" >>"$GITHUB_OUTPUT"
+            ;;
+          stage-to-master)
+            echo "src=stage"    >>"$GITHUB_OUTPUT"
+            echo "dst=master"   >>"$GITHUB_OUTPUT"
+            echo "label=Stage → Master" >>"$GITHUB_OUTPUT"
+            echo "devurl=https://stage-portal.nutanix.com/" >>"$GITHUB_OUTPUT"
+            ;;
+          *)  echo "Unsupported direction"; exit 1 ;;
+        esac
+
+    - name: Compose PR body
+      id: bodyfile
+      run: |
+        WF_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        SUMMARY="${{ github.event.inputs.pr_body }}"
+        [[ -z "$SUMMARY" ]] && SUMMARY="Automatically created PR"
+
+        file=$(mktemp)
+        cat >"$file" <<EOF
+        ### Summary
+        ${SUMMARY}
+
+        This PR was created via [workflow'run](${WF_URL}) - executed by @${{ github.actor }}
+
+        ### Dev URL
+        ${{ steps.branches.outputs.devurl }}
+        EOF
+        echo "path=$file" >>"$GITHUB_OUTPUT"
+
+    - name: Create release PR
+      id: pr
+      run: |
+        head="${{ steps.branches.outputs.src }}"
+        base="${{ steps.branches.outputs.dst }}"
+        title="${{ github.event.inputs.pr_title }}"
+        body_file="${{ steps.bodyfile.outputs.path }}"
+
+        url=$(gh pr list --state open --head "$head" --base "$base" \
+                         --json url --jq '.[0].url' || true)
+        if [[ -z $url ]]; then
+          url=$(gh pr create --head "$head" --base "$base" \
+                             --title "$title" --body-file "$body_file" | tail -n1)
+        fi
+        url=$(echo "$url" | tr -d '\r\n')
+        num=${url##*/}
+        gh pr edit "$num" --add-label "automated-pr" || true
+
+        echo "url=$url"          >>"$GITHUB_OUTPUT"
+        echo "number=$num"       >>"$GITHUB_OUTPUT"
+
+    - name: Add reviewers
+      run: |
+        commits=$(gh api repos/${{ github.repository }}/pulls/${{ steps.pr.outputs.number }}/commits)
+        reviewers=$(jq -r '.[] | .author.login' <<<"$commits" |
+                    grep -v -E '(^github-actions\[bot\]$|^$)' |
+                    sort -u | paste -sd, -)
+        [[ -n $reviewers ]] && gh pr edit "${{ steps.pr.outputs.number }}" --add-reviewer "$reviewers" || true
+
+    - name: Resolve actor email
+      id: actor
+      run: |
+        email=$(gh api users/${{ github.actor }} --jq '.email' 2>/dev/null || true)
+        [[ -z "$email" || "$email" == "null" ]] && email="${{ github.actor }}"
+        echo "email=$email" >>"$GITHUB_OUTPUT"
+
+    - name: Notify Slack
+      run: |
+        jq -n \
+          --arg event "create_release_pr" \
+          --arg title "${{ steps.branches.outputs.label }} PR #${{ steps.pr.outputs.number }} created" \
+          --arg body  "PR link: ${{ steps.pr.outputs.url }}" \
+          --arg actor "${{ steps.actor.outputs.email }}" \
+          '{event,title,body,actor}' |
+        curl -s -X POST -H 'Content-Type: application/json' \
+             --data @- "$SLACK_WEBHOOK_URL"

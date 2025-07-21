@@ -11,7 +11,7 @@ const ExampleComponent = () => {
       role="button"
       aria-label="Click me"
       onClick={() =>
-        console.log('Clicked without propersssss role or key event handlers')
+        console.log('Clicked without proper role or key event handlers')
       }
     >
       Click me!

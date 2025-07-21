@@ -1,5 +1,4 @@
 name: "Post-release automation"
-description: "Automates post-release tasks → generate notes, open sync PRs, notify Slack"
 
 env:
   GH_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
@@ -28,7 +27,7 @@ jobs:
         tag=${{ github.event.release.tag_name }}
 
         # Fetch current release notes
-        body=$(gh api repos/${{ github.repository }}/releases/tags/$tag --jq .body)
+        body=$(gh api repos/${{ github.repository }}/releases/tags/"$tag" --jq .body)
         body=${body:-}
 
         # Check if release notes already contain changelog
@@ -56,6 +55,8 @@ jobs:
 
     - name: Create PR (master → stage)
       id: pr_master_stage
+      env:
+        GH_TOKEN: ${{ secrets.PR_CREATOR_TOKEN }}
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}
@@ -88,6 +89,8 @@ jobs:
 
     - name: Create PR (stage → develop)
       id: pr_stage_develop
+      env:
+        GH_TOKEN: ${{ secrets.PR_CREATOR_TOKEN }}
       shell: bash
       run: |
         tag=${{ github.event.release.tag_name }}

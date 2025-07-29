@@ -148,7 +148,7 @@ jobs:
         curl -s -X POST -H 'Content-Type: application/json' \
              --data "$payload" "$SLACK_WEBHOOK_URL"
 
-    - name: DM contributors with their PRs
+    - name: Notify contributors
       shell: bash
       env:
         REPO: ${{ github.repository }}
@@ -163,80 +163,46 @@ jobs:
                     --jq 'map(select(.tagName != "'"$current_tag"'")) |
                           sort_by(.publishedAt) | last.tagName')
 
-        if [[ -z "$prev_tag" || "$prev_tag" == "null" ]]; then
-          echo "No previous release found; skipping contributor DMs."
-          exit 0
-        fi
+        [[ -z "$prev_tag" || "$prev_tag" == "null" ]] && {
+          echo "No previous release - skipping contributor DMs."; exit 0; }
 
-        # Commits between prev..current
-        shas=$(gh api repos/$REPO/compare/${prev_tag}...${current_tag} \
-              --jq '.commits[].sha')
+        # Get dates for merged:<from>..<to> filter (YYYY-MM-DD)
+        from=$(gh release view "$prev_tag"    --repo "$REPO" --json publishedAt --jq .publishedAt | cut -c1-10)
+        to=$(gh release view "$current_tag"   --repo "$REPO" --json publishedAt --jq .publishedAt | cut -c1-10)
 
-        echo "Found commits: $shas"
+        # ── collect unique GitHub users that merged into develop in this window ──
+        mapfile -t authors < <(
+          gh api repos/$REPO/compare/${prev_tag}...${current_tag} \
+            --jq '.commits[].sha' |
+          xargs -I{} gh api repos/$REPO/commits/{}'/pulls' \
+            --jq '.[] | select(.base.ref=="develop" and .merged_at!=null) | .user.login' |
+          sort -u
+        )
 
-        tmp=$(mktemp)
-        : > "$tmp"
-        while read -r sha; do
-          [[ -z "$sha" ]] && continue
-          gh api repos/$REPO/commits/$sha/pulls \
-            --jq '.[] | select(.base.ref=="develop" and .merged_at!=null)
-                  | {number, title, url:.html_url,
-                      headRef:(.head|.ref), author:(.user|.login)}' \
-            >> "$tmp" || true
-        done <<< "$shas"
-
-        [[ ! -s "$tmp" ]] && { echo "No develop PRs for this release window."; exit 0; }
-
-        grouped=$(jq -s 'group_by(.author)
-                        | map({author: .[0].author, prs: .})' "$tmp")
-
-        resolve_email() {
-          local login="$1"
-          local email
-          email=$(gh api users/"$login" --jq .email 2>/dev/null || echo "")
-          [[ -z "$email" || "$email" == "null" ]] && email=""
-          printf '%s' "$email"
-        }
+        [[ ${#authors[@]} -eq 0 ]] && { echo "No contributor PRs found."; exit 0; }
 
         sent=0
-        echo "$grouped" | jq -c '.[]' | while read -r row; do
-          login=$(jq -r '.author' <<<"$row")
-          email=$(resolve_email "$login")
+        for login in "${authors[@]}"; do
+          [[ -z "$login" ]] && continue
+          email=$(gh api users/"$login" --jq .email 2>/dev/null || true)
+          [[ -z "$email" || "$email" == "null" ]] && { echo "No email for $login - skipping"; continue; }
 
-          #  Skip if no email
-          [[ -z "$email" ]] && { echo "No email for $login — skipping"; continue; }
+          # GitHub search URL: all merged develop PRs by this author in the window
+          query="is:pr is:merged author:${login} base:develop merged:${from}..${to}"
+          url="https://github.com/${REPO}/pulls?q=$(jq -rn --arg q \"$query\" '$q|@uri')"
 
-          pr_text=$(jq -r '
-            .prs | map("- [#" + (.number|tostring) + "](" + .url + ") — " +
-                      .title + "  (branch: `" + .headRef + "`)")
-            | join("\n")
-          ' <<<"$row")
+          payload=$(jq -n \
+            --arg event      "post_release_contributor_dm" \
+            --arg actor      "$email" \
+            --arg releaseTag "${current_tag}" \
+            --arg contributionsUrl     "$url" \
+            --arg releaseUrl "$release_url" \
+            '{event,actor,title,body,releaseUrl}')
 
-          payload=$(
-            jq -n \
-              --arg event       "post_release_contributor_dm" \
-              --arg actor       "$email" \
-              --arg title       "Your changes are in release ${current_tag}" \
-              --arg body        "Thanks for contributing!  \n${pr_text}\n\nPlease delete feature branches you no longer need." \
-              --arg releaseUrl  "$release_url" \
-              '{event:$event,
-                actor:$actor,
-                title:$title,
-                body:$body,
-                releaseUrl:$releaseUrl}'
-          )
-
-          # Log notification details
-          echo "Sending Slack notification to: $login <$email>"
-          echo "Event: post_release_contributor_dm"
-          echo "Full payload:"
-          echo "$payload" | jq '.'
-
-          curl -s -X POST -H 'Content-Type: application/json' \
-              --data "$payload" "$SLACK_WEBHOOK_URL" >/dev/null || true
+          echo "DM → $login <$email>"
+          curl -s -X POST -H 'Content-Type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" || true
           sent=$((sent+1))
-          echo "DM sent to $login <$email>"
         done
 
-        echo "Total DMs sent: $sent"
+        echo "Total contributor DMs sent: $sent"
 

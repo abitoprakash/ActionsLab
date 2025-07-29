@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 
 
-// Example component to test jsx-a11y and unicorn rules
+// Examplsse component to test jsx-a11y and unicorn rules
 const App = () => <div>Hello, React!</div>;
 
 // Hello World!

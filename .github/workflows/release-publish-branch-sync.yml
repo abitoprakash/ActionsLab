@@ -212,13 +212,19 @@ jobs:
             | join("\n")
           ' <<<"$row")
 
-          payload=$(jq -n \
-            --arg event "post_release_contributor_dm" \
-            --arg actor "$email" \
-            --arg title "Your changes are in release ${current_tag}" \
-            --arg body  "Thanks for contributing!  \n${pr_text}\n\nPlease delete feature branches you no longer need." \
-            --arg releaseUrl "$release_url" \
-            '{event,actor,title,body,releaseUrl}')
+          payload=$(
+            jq -n \
+              --arg event       "post_release_contributor_dm" \
+              --arg actor       "$email" \
+              --arg title       "Your changes are in release ${current_tag}" \
+              --arg body        "Thanks for contributing!  \n${pr_text}\n\nPlease delete feature branches you no longer need." \
+              --arg releaseUrl  "$release_url" \
+              '{event:$event,
+                actor:$actor,
+                title:$title,
+                body:$body,
+                releaseUrl:$releaseUrl}'
+          )
 
           # Log notification details
           echo "Sending Slack notification to: $login <$email>"

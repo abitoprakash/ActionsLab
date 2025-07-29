@@ -125,7 +125,7 @@ jobs:
         email=$(gh api users/${{ github.actor }} --jq .email 2>/dev/null || echo "")
         echo "email=$email" >>"$GITHUB_OUTPUT"
 
-    - name: Send Slack notification
+    - name: Send release notification
       shell: bash
       run: |
         pr1="${{ steps.pr_master_stage.outputs.url }}"
@@ -147,3 +147,82 @@ jobs:
 
         curl -s -X POST -H 'Content-Type: application/json' \
              --data "$payload" "$SLACK_WEBHOOK_URL"
+
+    - name: DM contributors with their PRs
+      shell: bash
+      env:
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+
+        current_tag="${{ github.event.release.tag_name }}"
+        release_url="https://github.com/${REPO}/releases/tag/${current_tag}"
+
+        prev_tag=$(gh release list --repo "$REPO" --limit 3 \
+                    --json tagName,publishedAt \
+                    --jq 'map(select(.tagName != "'"$current_tag"'")) |
+                          sort_by(.publishedAt) | last.tagName')
+
+        if [[ -z "$prev_tag" || "$prev_tag" == "null" ]]; then
+          echo "No previous release found; skipping contributor DMs."
+          exit 0
+        fi
+
+        # Commits between prev..current
+        shas=$(gh api repos/$REPO/compare/${prev_tag}...${current_tag} \
+              --jq '.commits[].sha')
+
+        tmp=$(mktemp)
+        : > "$tmp"
+        while read -r sha; do
+          [[ -z "$sha" ]] && continue
+          gh api repos/$REPO/commits/$sha/pulls \
+            --jq '.[] | select(.base.ref=="develop" and .merged_at!=null)
+                  | {number, title, url:.html_url,
+                      headRef:(.head|.ref), author:(.user|.login)}' \
+            >> "$tmp" || true
+        done <<< "$shas"
+
+        [[ ! -s "$tmp" ]] && { echo "No develop PRs for this release window."; exit 0; }
+
+        grouped=$(jq -s 'group_by(.author)
+                        | map({author: .[0].author, prs: .})' "$tmp")
+
+        resolve_email() {
+          local login="$1"
+          local email
+          email=$(gh api users/"$login" --jq .email 2>/dev/null || echo "")
+          [[ -z "$email" || "$email" == "null" ]] && email=""
+          printf '%s' "$email"
+        }
+
+        sent=0
+        echo "$grouped" | jq -c '.[]' | while read -r row; do
+          login=$(jq -r '.author' <<<"$row")
+          email=$(resolve_email "$login")
+
+          #  Skip if no email
+          [[ -z "$email" ]] && { echo "No email for $login — skipping"; continue; }
+
+          pr_text=$(jq -r '
+            .prs | map("- [#" + (.number|tostring) + "](" + .url + ") — " +
+                      .title + "  (branch: `" + .headRef + "`)")
+            | join("\n")
+          ' <<<"$row")
+
+          payload=$(jq -n \
+            --arg event "post_release_contributor_dm" \
+            --arg actor "$email" \
+            --arg title "Your changes are in release ${current_tag}" \
+            --arg body  "Thanks for contributing!  \n${pr_text}\n\nPlease delete feature branches you no longer need." \
+            --arg releaseUrl "$release_url" \
+            '{event,actor,title,body,releaseUrl}')
+
+          curl -s -X POST -H 'Content-Type: application/json' \
+              --data "$payload" "$SLACK_WEBHOOK_URL" >/dev/null || true
+          sent=$((sent+1))
+          echo "DM sent to $login <$email>"
+        done
+
+        echo "Total DMs sent: $sent"
+

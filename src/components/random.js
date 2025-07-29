@@ -9,7 +9,7 @@ const ExampleComponent = () => {
   return (
     <div
       role="button"
-      aria-label="Click me"
+      aria-label="Click"
       onClick={() =>
         console.log('Clicked without proper role or key event handlers')
       }

@@ -202,8 +202,7 @@ jobs:
               actor:            $actor,
               releaseTag:       $releaseTag,
               contributionsUrl: $contributionsUrl,
-              releaseUrl:       $releaseUrl,
-              message:          $message
+              releaseUrl:       $releaseUrl
             }')
 
           echo "DM → $login <$email>"

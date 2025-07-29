@@ -1,7 +1,7 @@
 {
   "name": "actionslab",
   "version": "1.0.0",
-  "description": "Test github actions",
+  "description": "Test github actions - ActionsLab",
   "main": "index.js",
   "scripts": {
     "test": "test",

@@ -188,7 +188,7 @@ jobs:
           [[ -z "$email" || "$email" == "null" ]] && { echo "No email for $login - skipping"; continue; }
 
           # GitHub search URL: all merged develop PRs by this author in the window
-            query="is:pr is:merged author:${login} base:develop merged:${from}..${to}"
+            query="is:pr -label:automated-pr is:merged author:${login} base:develop merged:${from}..${to}"
             url="https://github.com/${REPO}/pulls?q=$(jq -rn --arg q "$query" '$q|@uri')"
 
 

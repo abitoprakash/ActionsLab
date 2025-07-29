@@ -191,13 +191,20 @@ jobs:
           query="is:pr is:merged author:${login} base:develop merged:${from}..${to}"
           url="https://github.com/${REPO}/pulls?q=$(jq -rn --arg q \"$query\" '$q|@uri')"
 
-          payload=$(jq -n \
-            --arg event      "post_release_contributor_dm" \
-            --arg actor      "$email" \
-            --arg releaseTag "${current_tag}" \
-            --arg contributionsUrl     "$url" \
-            --arg releaseUrl "$release_url" \
-            '{event,actor,releaseTag,contributionsUrl,releaseUrl}')
+            payload=$(jq -n \
+            --arg event              "post_release_contributor_dm" \
+            --arg actor              "$email" \
+            --arg releaseTag         "${current_tag}" \
+            --arg contributionsUrl   "$url" \
+            --arg releaseUrl         "$release_url" \
+            '{
+              event:            $event,
+              actor:            $actor,
+              releaseTag:       $releaseTag,
+              contributionsUrl: $contributionsUrl,
+              releaseUrl:       $releaseUrl,
+              message:          $message
+            }')
 
           echo "DM → $login <$email>"
           curl -s -X POST -H 'Content-Type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" || true

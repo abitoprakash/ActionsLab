@@ -197,7 +197,7 @@ jobs:
             --arg releaseTag "${current_tag}" \
             --arg contributionsUrl     "$url" \
             --arg releaseUrl "$release_url" \
-            '{event,actor,title,body,releaseUrl}')
+            '{event,actor,releaseTag,contributionsUrl,releaseUrl}')
 
           echo "DM → $login <$email>"
           curl -s -X POST -H 'Content-Type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" || true

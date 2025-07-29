@@ -222,7 +222,7 @@ jobs:
           echo "Sending Slack notification to: $login <$email>"
           echo "Event: post_release_contributor_dm"
           echo "Full payload:"
-          cho "$payload" | jq '.'
+          echo "$payload" | jq '.'
 
           curl -s -X POST -H 'Content-Type: application/json' \
               --data "$payload" "$SLACK_WEBHOOK_URL" >/dev/null || true

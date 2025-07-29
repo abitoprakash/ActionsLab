@@ -11,7 +11,7 @@ const ExampleComponent = () => {
     <div
       role="button"
       onClick={() =>
-        console.log('Clicked without propersssss role or key event handlers')
+        console.log('sa without propersssss role or key event handlers')
       }
     >
       Click me!

@@ -100,6 +100,8 @@ jobs:
         reviewers=$(jq -r '.[] | .author.login' <<<"$commits" |
                     grep -v -E '(^github-actions\[bot\]$|^$)' |
                     sort -u | paste -sd, -)
+        # Print reviewers for debugging
+        echo "Reviewers: $reviewers"
         [[ -n $reviewers ]] && gh pr edit "${{ steps.pr.outputs.number }}" --add-reviewer "$reviewers" || true
 
     - name: Resolve actor email

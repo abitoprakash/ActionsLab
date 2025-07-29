@@ -172,6 +172,8 @@ jobs:
         shas=$(gh api repos/$REPO/compare/${prev_tag}...${current_tag} \
               --jq '.commits[].sha')
 
+        echo "Found commits: $shas"
+
         tmp=$(mktemp)
         : > "$tmp"
         while read -r sha; do

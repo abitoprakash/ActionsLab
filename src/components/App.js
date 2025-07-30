@@ -1,10 +1,13 @@
 // test-eslint-plugins.js
-import React from 'react';
+import React, { useEffect } from 'react';
 
 // Example component to test jsx-a11y and unicorn rules
 const ExampleComponent = () => {
-  // unicorn rule: prefer-query-selector
-  const badPractice = document.getElementById('myElement');
+
+  useEffect(() => {
+    const element = document.querySelector('role="button"');
+    console.log('Element found:', element);
+  }, []);
 
   // jsx-a11y rule: no-static-element-interactions
   return (

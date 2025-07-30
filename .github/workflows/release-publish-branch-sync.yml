@@ -15,108 +15,131 @@ on:
 jobs:
   post_release:
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with: { fetch-depth: 0 }
 
-    - name: Generate release notes if missing
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Generate release notes (if missing)
       shell: bash
       run: |
-        tag=${{ github.event.release.tag_name }}
+        tag="${{ github.event.release.tag_name }}"
 
-        # Fetch current release notes
-        body=$(gh api repos/${{ github.repository }}/releases/tags/"$tag" --jq .body)
-        body=${body:-}
-
-        # Check if release notes already contain changelog
+        body=$(gh api repos/${{ github.repository }}/releases/tags/"$tag" --jq .body || echo "")
         if [[ -n "$body" && "$body" != "null" ]] && \
-          grep -qiE "What's[[:space:]]+Changed|Full[[:space:]]+Changelog" <<<"$body"; then
-          echo "Release notes already contain changelog, skipping generation."
+           grep -qiE "What.?s +Changed|Full +Changelog" <<<"$body"; then
+          echo "Changelog already present  - skipping."
           exit 0
         fi
 
-        # Generating release notes
-        gen=$(gh api --method POST \
-                repos/${{ github.repository }}/releases/generate-notes \
-                -f tag_name="$tag" --jq .body)
+        notes=$(gh api -X POST repos/${{ github.repository }}/releases/generate-notes \
+                     -f tag_name="$tag" --jq .body)
 
         tmp=$(mktemp)
-
         if [[ -z "$body" || "$body" == "null" ]]; then
-          # No previous notes → just write the generated changelog
-          printf '%s\n' "$gen" >"$tmp"
+          printf '%s\n' "$notes" >"$tmp"
         else
-          printf '%s\n\n---\n\n%s\n' "$body" "$gen" >"$tmp"
+          printf '%s\n\n---\n\n%s\n' "$body" "$notes" >"$tmp"
         fi
 
         gh release edit "$tag" --notes-file "$tmp"
 
-    - name: Create PR (master → stage)
+        # ───────────────────────── helper script (adds merge -readiness comment) ──
+    - name: Prepare PR comment helper script
+      shell: bash
+      run: |
+        cat <<'SH' >add_pr_merge_comment.sh
+        #!/usr/bin/env bash
+        # Usage: add_pr_merge_comment.sh <PR-number>
+        set -euo pipefail
+        pr="$1"
+
+        info=$(gh pr view "$pr" --json mergeable,changedFiles)
+        mergeable=$(jq -r '.mergeable'    <<<"$info")
+        changed=$( jq -r '.changedFiles'  <<<"$info")
+
+        if [[ "$mergeable" == "MERGEABLE" && "$changed" -eq 0 ]]; then
+          note="✅ Automated check: no file changes or conflicts  - safe to merge."
+        elif [[ "$mergeable" == "CONFLICTING" ]]; then
+          note="⚠️  Automated check: merge conflicts detected  - please rebase or resolve."
+        else
+          exit 0
+        fi
+
+        gh pr comment "$pr" --body "$note"
+        SH
+        chmod +x add_pr_merge_comment.sh
+
+    - name: Create PR master → stage
       id: pr_master_stage
       env:
         GH_TOKEN: ${{ secrets.PR_CREATOR_TOKEN }}
       shell: bash
       run: |
-        tag=${{ github.event.release.tag_name }}
-        url=$(gh pr list --state open --head master --base stage --json url --jq '.[0].url' || true)
+        tag="${{ github.event.release.tag_name }}"
+        repo="${{ github.repository }}"
 
-        if [[ -z $url ]]; then
-          set +e
-          output=$(gh pr create --head master --base stage \
-                     --title "Sync master to stage after $tag" \
-                     --body  "Automated sync PR after $tag." 2>&1)
-          status=$?
-          set -e
-          if [[ $status -eq 0 ]]; then
-            url=$(echo "$output" | tail -n1)
-          else
-            echo "::notice::No commits between master and stage - skipping PR"
-            url="N/A"
-          fi
-        fi
-
-        if [[ $url == https:* ]]; then
-          gh pr edit "$url" --add-label automated-pr || true
-          num=${url##*/}
+        existing=$(gh pr list --state open --head master --base stage --json url --jq '.[0].url' || true)
+        if [[ -z "$existing" ]]; then
+          gh pr create --repo "$repo" \
+            --head master --base stage \
+            --title "Sync master to stage after $tag" \
+            --body  "Automated sync PR after $tag." \
+            --label automated-pr
+          pr_url=$(gh pr list --state open --head master --base stage --json url --jq '.[0].url')
         else
-          num="N/A"
+          pr_url="$existing"
         fi
 
-        echo "url=$url"   >>"$GITHUB_OUTPUT"
-        echo "number=$num" >>"$GITHUB_OUTPUT"
+        echo "url=$pr_url"          >>"$GITHUB_OUTPUT"
+        echo "number=${pr_url##*/}" >>"$GITHUB_OUTPUT"
 
-    - name: Create PR (stage → develop)
+    - name: Add merge-readiness comment (master → stage)
+      if: steps.pr_master_stage.outputs.number != ''
+      env:
+        GH_TOKEN: ${{ secrets.PR_CREATOR_TOKEN }}
+      shell: bash
+      run: ./add_pr_merge_comment.sh "${{ steps.pr_master_stage.outputs.number }}"
+
+    - name: Create PR stage → develop
       id: pr_stage_develop
       env:
         GH_TOKEN: ${{ secrets.PR_CREATOR_TOKEN }}
       shell: bash
       run: |
-        tag=${{ github.event.release.tag_name }}
-        master_stage_url=${{ steps.pr_master_stage.outputs.url }}
-        url=$(gh pr list --state open --head stage --base develop --json url --jq '.[0].url' || true)
+        tag="${{ github.event.release.tag_name }}"
+        repo="${{ github.repository }}"
+        parent_pr="${{ steps.pr_master_stage.outputs.url }}"
 
-        if [[ -z $url ]]; then
-          set +e
-          output=$(gh pr create --head stage --base develop \
-                     --title "Sync stage to develop after $tag" \
-                     --body  "Please merge the master → stage PR first:\n${master_stage_url}" 2>&1)
-          status=$?
-          set -e
-          if [[ $status -eq 0 ]]; then
-            url=$(echo "$output" | tail -n1)
-          else
-            echo "::notice::No commits between stage and develop - skipping PR"
-            url="N/A"
-          fi
+        body=$'Sync PR\n\nPlease merge master→stage PR first:\n'"$parent_pr"
+
+        existing=$(gh pr list --state open --head stage --base develop --json url --jq '.[0].url' || true)
+        if [[ -z "$existing" ]]; then
+          gh pr create --repo "$repo" \
+            --head stage --base develop \
+            --title "Sync stage to develop after $tag" \
+            --body  "$body" \
+            --label automated-pr
+          pr_url=$(gh pr list --state open --head stage --base develop --json url --jq '.[0].url')
+        else
+          pr_url="$existing"
+          # ensure the body is up -to -date
+          gh pr edit "${pr_url##*/}" --body "$body"
         fi
 
-        if [[ $url == https:* ]]; then
-          gh pr edit "$url" --add-label automated-pr || true
-        fi
+        echo "url=$pr_url"          >>"$GITHUB_OUTPUT"
+        echo "number=${pr_url##*/}" >>"$GITHUB_OUTPUT"
 
-        echo "url=$url" >>"$GITHUB_OUTPUT"
+    - name: Add merge-readiness comment (stage → develop)
+      if: steps.pr_stage_develop.outputs.number != ''
+      env:
+        GH_TOKEN: ${{ secrets.PR_CREATOR_TOKEN }}
+      shell: bash
+      run: ./add_pr_merge_comment.sh "${{ steps.pr_stage_develop.outputs.number }}"
 
     - name: Resolve actor email
       id: actor_email
@@ -125,91 +148,54 @@ jobs:
         email=$(gh api users/${{ github.actor }} --jq .email 2>/dev/null || echo "")
         echo "email=$email" >>"$GITHUB_OUTPUT"
 
-    - name: Send release notification
+    - name: Slack notification - release summary
       shell: bash
       run: |
-        pr1="${{ steps.pr_master_stage.outputs.url }}"
-        pr2="${{ steps.pr_stage_develop.outputs.url }}"
+        jq -n \
+          --arg event  "post_release" \
+          --arg title  "Release ${{ github.event.release.tag_name }} published" \
+          --arg body   "Release notes: ${{ github.event.release.html_url }}" \
+          --arg actor  "${{ steps.actor_email.outputs.email }}" \
+          --arg stagePR "${{ steps.pr_master_stage.outputs.url }}" \
+          --arg devPR   "${{ steps.pr_stage_develop.outputs.url }}" \
+          '{event,title,body,actor,postReleaseStagePR:$stagePR,postReleaseDevelopPR:$devPR}' |
+        curl -s -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL"
 
-        payload=$(jq -n \
-          --arg event "post_release" \
-          --arg title "Release ${{ github.event.release.tag_name }} published" \
-          --arg body  "Release notes: ${{ github.event.release.html_url }}" \
-          --arg actor "${{ steps.actor_email.outputs.email }}" \
-          --arg postReleaseStagePR   "$pr1" \
-          --arg postReleaseDevelopPR "$pr2" \
-          '{event:$event,
-            title:$title,
-            body:$body,
-            actor:$actor,
-            postReleaseStagePR:$postReleaseStagePR,
-            postReleaseDevelopPR:$postReleaseDevelopPR}')
-
-        curl -s -X POST -H 'Content-Type: application/json' \
-             --data "$payload" "$SLACK_WEBHOOK_URL"
-
-    - name: Notify contributors
-      shell: bash
+    - name: Slack - notify contributors
       env:
         REPO: ${{ github.repository }}
+      shell: bash
       run: |
         set -euo pipefail
+        current="${{ github.event.release.tag_name }}"
+        release_url="https://github.com/${REPO}/releases/tag/${current}"
 
-        current_tag="${{ github.event.release.tag_name }}"
-        release_url="https://github.com/${REPO}/releases/tag/${current_tag}"
+        previous=$(gh release list --repo "$REPO" --limit 2 --json tagName \
+                     --jq '[.[].tagName] | map(select(. != "'"$current"'")) | first')
+        [[ -z "$previous" ]] && { echo "No previous release  - skipping DMs."; exit 0; }
 
-        prev_tag=$(gh release list --repo "$REPO" --limit 3 \
-                    --json tagName,publishedAt \
-                    --jq 'map(select(.tagName != "'"$current_tag"'")) |
-                          sort_by(.publishedAt) | last.tagName')
+        from=$(gh release view "$previous" --repo "$REPO" --json publishedAt --jq .publishedAt | cut -c1-10)
+        to=$(gh release view "$current"   --repo "$REPO" --json publishedAt --jq .publishedAt | cut -c1-10)
 
-        [[ -z "$prev_tag" || "$prev_tag" == "null" ]] && {
-          echo "No previous release - skipping contributor DMs."; exit 0; }
-
-        # Get dates for merged:<from>..<to> filter (YYYY-MM-DD)
-        from=$(gh release view "$prev_tag"    --repo "$REPO" --json publishedAt --jq .publishedAt | cut -c1-10)
-        to=$(gh release view "$current_tag"   --repo "$REPO" --json publishedAt --jq .publishedAt | cut -c1-10)
-
-        # ── collect unique GitHub users that merged into develop in this window ──
         mapfile -t authors < <(
-          gh api repos/$REPO/compare/${prev_tag}...${current_tag} \
-            --jq '.commits[].sha' |
+          gh api repos/$REPO/compare/${previous}...${current} --jq '.commits[].sha' |
           xargs -I{} gh api repos/$REPO/commits/{}'/pulls' \
             --jq '.[] | select(.base.ref=="develop" and .merged_at!=null) | .user.login' |
           sort -u
         )
 
-        [[ ${#authors[@]} -eq 0 ]] && { echo "No contributor PRs found."; exit 0; }
-
-        sent=0
         for login in "${authors[@]}"; do
-          [[ -z "$login" ]] && continue
           email=$(gh api users/"$login" --jq .email 2>/dev/null || true)
-          [[ -z "$email" || "$email" == "null" ]] && { echo "No email for $login - skipping"; continue; }
+          [[ -z "$email" || "$email" == "null" ]] && continue
+          query="is:pr -label:automated-pr is:merged author:${login} base:develop merged:${from}..${to}"
+          link="https://github.com/${REPO}/pulls?q=$(jq -rn --arg q \"$query\" '$q|@uri')"
 
-          # GitHub search URL: all merged develop PRs by this author in the window
-            query="is:pr is:merged author:${login} base:develop merged:${from}..${to}"
-            url="https://github.com/${REPO}/pulls?q=$(jq -rn --arg q "$query" '$q|@uri')"
-
-
-            payload=$(jq -n \
-            --arg event              "post_release_contributor_dm" \
-            --arg actor              "$email" \
-            --arg releaseTag         "${current_tag}" \
-            --arg contributionsUrl   "$url" \
-            --arg releaseUrl         "$release_url" \
-            '{
-              event:            $event,
-              actor:            $actor,
-              releaseTag:       $releaseTag,
-              contributionsUrl: $contributionsUrl,
-              releaseUrl:       $releaseUrl
-            }')
-
-          echo "DM → $login <$email>"
-          curl -s -X POST -H 'Content-Type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" || true
-          sent=$((sent+1))
+          jq -n \
+            --arg event  "post_release_contributor_dm" \
+            --arg actor  "$email" \
+            --arg tag    "$current" \
+            --arg contributionsUrl "$link" \
+            --arg releaseUrl      "$release_url" \
+            '{event,actor,releaseTag:$tag,contributionsUrl,releaseUrl}' |
+          curl -s -X POST -H 'Content-Type: application/json' --data @- "$SLACK_WEBHOOK_URL" || true
         done
-
-        echo "Total contributor DMs sent: $sent"
-
